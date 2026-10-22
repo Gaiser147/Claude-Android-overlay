@@ -1,7 +1,12 @@
 package io.github.gaiser147.claudeoverlay.overlay
 
 import io.github.gaiser147.claudeoverlay.AppGraph
+import io.github.gaiser147.claudeoverlay.access.AccessibilityShots
+import io.github.gaiser147.claudeoverlay.access.ControlService
+import io.github.gaiser147.claudeoverlay.capture.CaptureSequence
+import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
 import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
+import io.github.gaiser147.claudeoverlay.capture.ScreenshotSource
 import io.github.gaiser147.claudeoverlay.capture.Shot
 import io.github.gaiser147.claudeoverlay.cli.Attachment
 import io.github.gaiser147.claudeoverlay.cli.ChatEvent
@@ -11,7 +16,6 @@ import io.github.gaiser147.claudeoverlay.cli.ShotFingerprint
 import io.github.gaiser147.claudeoverlay.cli.UserMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -59,14 +63,17 @@ data class ChatUiState(
 class ChatController(
     private val graph: AppGraph,
     private val scope: CoroutineScope,
-    /** Hides/shows the overlay window so it isn't in its own screenshot. */
-    private val setOverlayHidden: suspend (Boolean) -> Unit,
+    /** The overlay window, so it can step aside for screenshots. */
+    captureWindow: CaptureWindow,
 ) {
+    private val captureSequence = CaptureSequence(captureWindow)
     private val session = ClaudeSession(graph.env, graph.proxy)
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state
 
-    private var capturer: ScreenCapturer? = null
+    /** MediaProjection capture, only used while the accessibility service is off. */
+    private var projection: ScreenCapturer? = null
+    private var accessibility: ControlService? = null
     private val pending = mutableListOf<Attachment>()
     private var lastSentFingerprint: LongArray? = null
     private var nextKey = 0L
@@ -88,19 +95,33 @@ class ChatController(
             if (graph.auth.isLoggedIn()) startSession(null) else _state.update { it.copy(needsLogin = true) }
         }
         scope.launch { session.events.collect(::onEvent) }
+        scope.launch {
+            ControlService.instance.collect { service ->
+                accessibility = service?.takeIf { ControlService.canScreenshot }
+                updateCanCapture()
+            }
+        }
     }
 
-    fun attachCapturer(c: ScreenCapturer?) {
-        capturer?.release()
-        capturer = c
-        _state.update { it.copy(canCapture = c != null) }
+    fun attachProjection(c: ScreenCapturer?) {
+        projection?.release()
+        projection = c
+        updateCanCapture()
     }
 
-    fun onCaptureStopped() {
-        capturer = null
-        _state.update { it.copy(canCapture = false) }
-        notice("Screen capture was stopped. Restart the overlay from the app to send screenshots again.", false)
+    fun onProjectionStopped() {
+        projection = null
+        updateCanCapture()
+        if (accessibility == null) {
+            notice("Screen capture was stopped. Restart the overlay from the app to send screenshots again.", false)
+        }
     }
+
+    /** The accessibility service when it's on (no consent prompt, exact timing), else MediaProjection. */
+    private fun screenshotSource(): ScreenshotSource? =
+        accessibility?.let { if (android.os.Build.VERSION.SDK_INT >= 30) AccessibilityShots(it) else null } ?: projection
+
+    private fun updateCanCapture() = _state.update { it.copy(canCapture = screenshotSource() != null) }
 
     fun setExpanded(expanded: Boolean) =
         _state.update { it.copy(expanded = expanded, doneWhileCollapsed = if (expanded) false else it.doneWhileCollapsed) }
@@ -140,7 +161,10 @@ class ChatController(
             val shot = if (s.screenshots) takeShot() else null
             val unchanged = shot != null && ShotFingerprint.sameScreen(shot.fingerprint, lastSentFingerprint)
             val built = withContext(Dispatchers.Default) {
-                UserMessage.build(text, if (unchanged) null else shot?.attachment, unchanged, files)
+                UserMessage.build(
+                    text, if (unchanged) null else shot?.attachment, unchanged, files,
+                    screenshotSize = shot?.let { it.width to it.height },
+                )
             }
             if (shot != null && !unchanged) lastSentFingerprint = shot.fingerprint
             val note = listOfNotNull(
@@ -208,20 +232,13 @@ class ChatController(
 
     fun close() {
         session.stop()
-        capturer?.release()
-        capturer = null
+        projection?.release()
+        projection = null
     }
 
     private suspend fun takeShot(): Shot? {
-        val c = capturer ?: return null
-        setOverlayHidden(true)
-        return try {
-            // Let the compositor draw (and the mirror deliver) a frame without the overlay.
-            delay(HIDE_SETTLE_MS)
-            withContext(Dispatchers.IO) { runCatching { c.capture() }.getOrNull() }
-        } finally {
-            setOverlayHidden(false)
-        }
+        val source = screenshotSource() ?: return null
+        return runCatching { captureSequence.run(source) }.getOrNull()
     }
 
     private fun onEvent(event: ChatEvent) {
@@ -297,7 +314,4 @@ class ChatController(
     private fun looksLikeAuthError(text: String) =
         listOf("/login", "not logged in", "authentication", "oauth", "401").any { text.contains(it, ignoreCase = true) }
 
-    companion object {
-        const val HIDE_SETTLE_MS = 180L
-    }
 }

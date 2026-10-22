@@ -41,4 +41,10 @@
     <string name="model">Modell</string>
     <string name="model_custom">Andere Modell-ID (z. B. eine bestimmte Version)</string>
     <string name="model_use">Verwenden</string>
+    <string name="accessibility_description">Erlaubt Claude Overlay Screenshots ohne Abfrage bei jedem Start und – nur wenn du im Overlay die Steuerung einschaltest – dass Claude für dich tippt, wischt, schreibt, zeichnet und Apps öffnet.</string>
+    <string name="step_accessibility">Bedienungshilfe-Dienst einschalten (empfohlen)</string>
+    <string name="accessibility_explain">Screenshots ohne Abfrage bei jedem Start; nötig, damit Claude Apps bedienen kann. Einstellungen → Eingabehilfen → Installierte Apps → Claude Overlay. Ist der Schalter ausgegraut (Android 13+, als APK installiert): App-Info → ⋮ → „Eingeschränkte Einstellungen zulassen“, dann erneut versuchen.</string>
+    <string name="open_settings">Einstellungen öffnen</string>
+    <string name="accessibility_on">Aktiv</string>
+    <string name="screenshots_via_accessibility">Screenshots kommen über die Bedienungshilfe – keine Bildschirmaufnahme-Abfrage nötig.</string>
 </resources>

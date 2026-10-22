@@ -41,6 +41,7 @@ object UserMessage {
         screenshot: Attachment?,
         screenUnchanged: Boolean,
         files: List<Attachment>,
+        screenshotSize: Pair<Int, Int>? = null,
     ): Built {
         val rejected = mutableListOf<Rejected>()
         val blocks = mutableListOf<JsonObject>()
@@ -78,7 +79,7 @@ object UserMessage {
                 }
             }
         }
-        val prompt = promptText(text, shotAttached, screenUnchanged, attachedFiles)
+        val prompt = promptText(text, shotAttached, screenUnchanged, attachedFiles, screenshotSize.takeIf { shotAttached })
         val content = buildJsonArray {
             add(buildJsonObject { put("type", "text"); put("text", prompt) })
             blocks.forEach { add(it) }
@@ -86,14 +87,23 @@ object UserMessage {
         return Built(envelope(content), rejected)
     }
 
-    fun promptText(text: String, screenshot: Boolean, unchanged: Boolean, files: Int): String {
+    fun promptText(
+        text: String,
+        screenshot: Boolean,
+        unchanged: Boolean,
+        files: Int,
+        screenshotSize: Pair<Int, Int>? = null,
+    ): String {
         val note = buildList {
             if (unchanged) add(
                 "[My screen is UNCHANGED since the most recent screenshot of it earlier in this " +
                     "conversation — keep using that one. If you no longer have that screenshot in " +
                     "context, say so instead of guessing.]"
             )
-            if (screenshot) add("[Attached: a live screenshot of my phone screen.]")
+            if (screenshot) add(
+                screenshotSize?.let { (w, h) -> "[Attached: a live screenshot of my phone screen, $w×$h px.]" }
+                    ?: "[Attached: a live screenshot of my phone screen.]"
+            )
             if (files > 0) add("[Attached: $files file(s).]")
         }
         val body = when {

@@ -54,6 +54,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import io.github.gaiser147.claudeoverlay.access.ControlService
 import io.github.gaiser147.claudeoverlay.cli.AuthManager.LoginState
 import io.github.gaiser147.claudeoverlay.overlay.OverlayService
 import io.github.gaiser147.claudeoverlay.ui.theme.ClaudeOverlayTheme
@@ -89,6 +90,7 @@ private fun SetupScreen() {
     var refresh by remember { mutableIntStateOf(0) }
     val login by graph.auth.state.collectAsState()
     var withScreenshots by remember { mutableStateOf(true) }
+    val accessibility by ControlService.instance.collectAsState()
 
     // Permissions are granted in Settings, so re-check whenever we come back.
     LaunchedEffect(Unit) {
@@ -201,14 +203,27 @@ private fun SetupScreen() {
             }
         }
 
-        Step(5, stringResource(R.string.step_start), done = false, enabled = canOverlay && cliVersion != null && loggedIn == true) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = withScreenshots, onCheckedChange = { withScreenshots = it })
-                Text(stringResource(R.string.with_screenshots), color = c.text, fontSize = 14.sp)
+        Step(5, stringResource(R.string.step_accessibility), done = accessibility != null,
+            detail = if (accessibility != null) stringResource(R.string.accessibility_on) else null) {
+            Text(stringResource(R.string.accessibility_explain), color = c.muted, fontSize = 13.sp)
+            Button(onClick = {
+                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }) { Text(stringResource(R.string.open_settings)) }
+        }
+
+        Step(6, stringResource(R.string.step_start), done = false, enabled = canOverlay && cliVersion != null && loggedIn == true) {
+            val shotsViaService = accessibility != null && ControlService.canScreenshot
+            if (shotsViaService) {
+                Text(stringResource(R.string.screenshots_via_accessibility), color = c.muted, fontSize = 13.sp)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = withScreenshots, onCheckedChange = { withScreenshots = it })
+                    Text(stringResource(R.string.with_screenshots), color = c.text, fontSize = 14.sp)
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
-                    if (withScreenshots) {
+                    if (withScreenshots && !shotsViaService) {
                         val mpm = context.getSystemService(MediaProjectionManager::class.java)
                         projectionLauncher.launch(mpm.createScreenCaptureIntent())
                     } else {
@@ -249,7 +264,7 @@ private fun Step(
                 detail?.let { Text(it, color = c.muted, fontSize = 12.sp) }
             }
         }
-        if (enabled && (!done || number == 3 || number == 5)) content()
+        if (enabled && (!done || number == 3 || number == 6)) content()
     }
 }
 

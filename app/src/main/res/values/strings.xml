@@ -42,4 +42,11 @@
     <string name="model">Model</string>
     <string name="model_custom">Other model ID (e.g. a specific version)</string>
     <string name="model_use">Use</string>
+    <string name="accessibility_label" translatable="false">Claude Overlay</string>
+    <string name="accessibility_description">Lets Claude Overlay take screenshots for Claude without asking on every start, and — only if you switch on phone control in the overlay — lets Claude tap, swipe, type, draw and open apps on your behalf.</string>
+    <string name="step_accessibility">Turn on the accessibility service (recommended)</string>
+    <string name="accessibility_explain">Screenshots without a prompt on every start; needed for Claude to operate apps. Settings → Accessibility → Installed apps → Claude Overlay. If the switch is greyed out (Android 13+, app installed as APK): App info → ⋮ → \"Allow restricted settings\", then try again.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="accessibility_on">On</string>
+    <string name="screenshots_via_accessibility">Screenshots come from the accessibility service; no screen-recording prompt needed.</string>
 </resources>

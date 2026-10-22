@@ -25,6 +25,8 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.IntentCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -35,9 +37,11 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import io.github.gaiser147.claudeoverlay.AppGraph
 import io.github.gaiser147.claudeoverlay.MainActivity
 import io.github.gaiser147.claudeoverlay.R
+import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
 import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
 import io.github.gaiser147.claudeoverlay.ui.theme.ClaudeOverlayTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -56,6 +60,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     lateinit var controller: ChatController
         private set
 
+    /** A MediaProjection is live, so the foreground service must keep its mediaProjection type. */
+    private var projectionActive = false
     private var bubbleX = 0
     private var bubbleY = 0
     private var panelX = 0
@@ -69,7 +75,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         super.onCreate()
         current = this
         wm = getSystemService(WindowManager::class.java)
-        controller = ChatController(AppGraph.get(this), lifecycleScope, ::setHidden)
+        controller = ChatController(AppGraph.get(this), lifecycleScope, captureWindow)
         val (sw, sh) = screenSize()
         bubbleX = sw - dp(BUBBLE_DP) - dp(8)
         bubbleY = (sh * 0.35f).roundToInt()
@@ -92,14 +98,20 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         val code = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val data = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_DATA, Intent::class.java) }
         // Keep the mediaProjection type while a capture is live, or Android ends the projection.
-        startInForeground(data != null || controller.state.value.canCapture)
+        startInForeground(data != null || projectionActive)
         if (data != null) {
             val projection = getSystemService(MediaProjectionManager::class.java).getMediaProjection(code, data)
             if (projection != null) {
                 val capturer = runCatching {
-                    ScreenCapturer(this, projection) { lifecycleScope.launch { controller.onCaptureStopped() } }
+                    ScreenCapturer(this, projection) {
+                        lifecycleScope.launch {
+                            projectionActive = false
+                            controller.onProjectionStopped()
+                        }
+                    }
                 }.getOrNull()
-                controller.attachCapturer(capturer)
+                projectionActive = capturer != null
+                controller.attachProjection(capturer)
             }
         }
         // The projection consent can't be replayed, so a restart without it would be half-working.
@@ -204,10 +216,34 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** Hidden while a screenshot is taken, so the overlay isn't in its own picture. */
-    private suspend fun setHidden(hidden: Boolean) = withContext(Dispatchers.Main) {
-        root.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
+    /** How a screenshot gets the overlay (and its keyboard) out of the picture. */
+    private val captureWindow = object : CaptureWindow {
+        override suspend fun dismissKeyboard() = withContext(Dispatchers.Main) {
+            // The keyboard is its own window: hiding ours leaves it on screen, over the content.
+            val wasShown = hideKeyboard()
+            if (!wasShown && !imeVisible()) return@withContext
+            var waited = 0L
+            while (imeVisible() && waited < IME_HIDE_TIMEOUT_MS) {
+                delay(FRAME_MS)
+                waited += FRAME_MS
+            }
+            // Insets flip when the slide-out starts; let it finish (or cover a device whose
+            // overlay windows never receive IME insets at all).
+            delay((IME_EXIT_ANIMATION_MS - waited).coerceAtLeast(FRAME_MS * 2))
+        }
+
+        override suspend fun setHidden(hidden: Boolean) = withContext(Dispatchers.Main) {
+            // Window alpha, not just view visibility: an invisible view still leaves a window
+            // the compositor (and Android's touch-occlusion check) accounts for.
+            root.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
+            params.alpha = if (hidden) 0f else 1f
+            update()
+            Unit
+        }
     }
+
+    private fun imeVisible(): Boolean =
+        ViewCompat.getRootWindowInsets(root)?.isVisible(WindowInsetsCompat.Type.ime()) == true
 
     /**
      * The panel takes keyboard focus only while it's being used: a touch outside hands focus
@@ -221,9 +257,9 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         update()
     }
 
-    private fun hideKeyboard() {
+    /** @return true if the keyboard was showing. */
+    private fun hideKeyboard(): Boolean =
         getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(root.windowToken, 0)
-    }
 
     private fun update() = runCatching { wm.updateViewLayout(root, params) }
 
@@ -292,6 +328,9 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
         private const val CHANNEL = "overlay"
+        private const val FRAME_MS = 16L
+        private const val IME_HIDE_TIMEOUT_MS = 600L
+        private const val IME_EXIT_ANIMATION_MS = 300L
         private const val NOTIFICATION_ID = 1
 
         private const val BUBBLE_FLAGS = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or

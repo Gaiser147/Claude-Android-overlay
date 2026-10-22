@@ -30,6 +30,13 @@ class UserMessageTest {
     }
 
     @Test
+    fun `the screenshot note carries the image size the tools use as coordinates`() {
+        val shot = Attachment("screenshot.jpg", "image/jpeg", byteArrayOf(1))
+        val text = content(UserMessage.build("", shot, false, emptyList(), screenshotSize = 720 to 1568).line)[0].str("text")
+        assertTrue(text.startsWith("[Attached: a live screenshot of my phone screen, 720×1568 px.]"))
+    }
+
+    @Test
     fun `envelope is a stream-json user message`() {
         val root = Json.parseToJsonElement(UserMessage.build("hi", null, false, emptyList()).line).jsonObject
         assertEquals("user", root.str("type"))

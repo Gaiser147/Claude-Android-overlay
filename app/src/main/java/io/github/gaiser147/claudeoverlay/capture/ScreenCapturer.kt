@@ -13,32 +13,32 @@ import android.os.HandlerThread
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.core.graphics.createBitmap
-import io.github.gaiser147.claudeoverlay.cli.Attachment
-import io.github.gaiser147.claudeoverlay.cli.ShotFingerprint
-import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** A screenshot ready to attach, plus its fingerprint for "is the screen unchanged?". */
-class Shot(val attachment: Attachment, val fingerprint: LongArray?)
-
 /**
- * Mirrors the screen into an ImageReader for as long as the overlay runs, and hands out the
- * newest frame on demand. One VirtualDisplay for the whole projection: Android 14+ allows a
- * consent token exactly one.
+ * Screenshots through MediaProjection, for when the accessibility service isn't enabled.
  *
- * Frames arrive only when the screen changes, so the reader just keeps the most recent
- * Image around (closing the one before) rather than copying every frame.
+ * Mirrors the screen into an ImageReader for as long as the overlay runs and keeps only the
+ * newest frame. One VirtualDisplay for the whole projection: Android 14+ allows a consent token
+ * exactly one. Frames arrive only when the screen changes, so a capture waits for the frame the
+ * compositor produces after the overlay disappeared instead of taking whatever came last
+ * (which would still show the overlay).
  */
 class ScreenCapturer(
     private val context: Context,
     private val projection: MediaProjection,
     private val onStopped: () -> Unit,
-) {
+) : ScreenshotSource {
     private val thread = HandlerThread("screen-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private val lock = Any()
     private var latest: Image? = null
+    /** System.nanoTime() at which [latest] arrived. */
+    private var latestAt = 0L
     private var reader: ImageReader
     private var display: VirtualDisplay
     private var size: Pair<Int, Int>
@@ -62,19 +62,18 @@ class ScreenCapturer(
         )
     }
 
-    /** The newest frame as a JPEG, or null if none has arrived yet. Call off the main thread. */
-    fun capture(): Shot? {
+    override suspend fun capture(notBeforeNanos: Long): Shot? = withContext(Dispatchers.IO) {
         ensureOrientation()
-        val bitmap = synchronized(lock) { latest?.let(::toBitmap) } ?: return null
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        val fingerprint = runCatching { ShotFingerprint.of(pixels, bitmap.width, bitmap.height) }.getOrNull()
-        val jpeg = ByteArrayOutputStream().use {
-            bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it)
-            it.toByteArray()
+        // A frame that arrives within two vsyncs of hiding may have been composed before it.
+        val fresh = notBeforeNanos + FRAME_SLACK_NANOS
+        var waited = 0L
+        while (synchronized(lock) { latestAt } < fresh && waited < FRESH_FRAME_TIMEOUT_MS) {
+            delay(POLL_MS)
+            waited += POLL_MS
         }
-        bitmap.recycle()
-        return Shot(Attachment("screenshot.jpg", "image/jpeg", jpeg), fingerprint)
+        // No new frame at all means nothing changed on screen; the latest one is then current.
+        val bitmap = synchronized(lock) { latest?.let(::toBitmap) } ?: return@withContext null
+        ShotEncoder.encode(bitmap)
     }
 
     fun release() {
@@ -91,7 +90,7 @@ class ScreenCapturer(
     }
 
     /** Rotating the phone swaps width and height; follow it so captures aren't letterboxed. */
-    private fun ensureOrientation() {
+    private suspend fun ensureOrientation() {
         val wanted = targetSize()
         if (wanted == size) return
         val old = reader
@@ -102,10 +101,9 @@ class ScreenCapturer(
         synchronized(lock) {
             latest?.close()
             latest = null
+            latestAt = 0L
         }
         old.close()
-        // Give the mirror a moment to produce a frame at the new size.
-        Thread.sleep(250)
     }
 
     private fun newReader(size: Pair<Int, Int>) =
@@ -115,6 +113,7 @@ class ScreenCapturer(
                 synchronized(lock) {
                     latest?.close()
                     latest = image
+                    latestAt = System.nanoTime()
                 }
             }, handler)
         }
@@ -129,29 +128,31 @@ class ScreenCapturer(
         return Bitmap.createBitmap(padded, 0, 0, image.width, image.height).also { padded.recycle() }
     }
 
-    /** Screen size scaled so the long edge is at most [MAX_EDGE], like the desktop overlay. */
+    /** Screen size scaled so the long edge is at most [ShotEncoder.MAX_EDGE]. */
     private fun targetSize(): Pair<Int, Int> {
-        val (w, h) = screenSize()
-        val scale = minOf(1f, MAX_EDGE.toFloat() / max(w, h))
+        val (w, h) = screenSize(context)
+        val scale = minOf(1f, ShotEncoder.MAX_EDGE.toFloat() / max(w, h))
         return (w * scale).roundToInt() to (h * scale).roundToInt()
-    }
-
-    private fun screenSize(): Pair<Int, Int> {
-        val wm = context.getSystemService(WindowManager::class.java)
-        return if (android.os.Build.VERSION.SDK_INT >= 30) {
-            val b = wm.maximumWindowMetrics.bounds
-            b.width() to b.height()
-        } else {
-            val m = DisplayMetrics()
-            @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(m)
-            m.widthPixels to m.heightPixels
-        }
     }
 
     private fun densityDpi() = context.resources.displayMetrics.densityDpi
 
     companion object {
-        const val MAX_EDGE = 1568
-        const val JPEG_QUALITY = 82
+        private const val FRAME_SLACK_NANOS = 34_000_000L
+        private const val FRESH_FRAME_TIMEOUT_MS = 600L
+        private const val POLL_MS = 16L
+    }
+}
+
+/** The full physical screen size in pixels, status and navigation bars included. */
+fun screenSize(context: Context): Pair<Int, Int> {
+    val wm = context.getSystemService(WindowManager::class.java)
+    return if (android.os.Build.VERSION.SDK_INT >= 30) {
+        val b = wm.maximumWindowMetrics.bounds
+        b.width() to b.height()
+    } else {
+        val m = DisplayMetrics()
+        @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(m)
+        m.widthPixels to m.heightPixels
     }
 }
