@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="setup_intro">Ein schwebendes Claude-Code-Fenster über jeder App. Es führt die offizielle Claude Code CLI auf diesem Handy mit deinem eigenen Claude-Abo aus – ohne API-Key, ohne Termux.</string>
+    <string name="step_overlay">Über anderen Apps einblenden erlauben</string>
+    <string name="step_notifications">Benachrichtigungen erlauben (hält das Overlay am Laufen)</string>
+    <string name="step_cli">Claude Code herunterladen</string>
+    <string name="cli_installed">Installiert: %1$s</string>
+    <string name="cli_explain">Lädt den offiziellen linux-arm64-Build (ca. 130 MB Download, 285 MB Speicher) von npm und prüft die Prüfsumme.</string>
+    <string name="download">Herunterladen</string>
+    <string name="update">Nach Update suchen</string>
+    <string name="step_login">Mit deinem Claude-Konto anmelden</string>
+    <string name="login_paste">Melde dich im Browser an, kopiere den angezeigten Code und füge ihn hier ein.</string>
+    <string name="login_code">Code</string>
+    <string name="submit">Absenden</string>
+    <string name="reopen_browser">Browser erneut öffnen</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="sign_in">Anmelden</string>
+    <string name="step_start">Overlay starten</string>
+    <string name="with_screenshots">Mit jeder Nachricht einen Screenshot senden</string>
+    <string name="start_overlay">Starten</string>
+    <string name="stop_overlay">Beenden</string>
+    <string name="grant">Erlauben</string>
+    <string name="setup_footer">Claude darf seine Werkzeuge ohne Rückfrage nutzen – innerhalb des privaten Ordners dieser App. Daten anderer Apps kann es nicht lesen; deinen Bildschirm sieht es nur über die Screenshots, die du sendest.</string>
+    <string name="notification_channel">Overlay</string>
+    <string name="notification_title">Claude Overlay läuft</string>
+    <string name="notification_text">Tippen, um den Chat zu öffnen</string>
+    <string name="toggle_screenshots">Screenshots an/aus</string>
+    <string name="new_conversation">Neue Unterhaltung</string>
+    <string name="attach_files">Dateien anhängen…</string>
+    <string name="open_app">Einstellungen</string>
+    <string name="collapse">Einklappen</string>
+    <string name="empty_title">Frag nach dem, was auf deinem Bildschirm ist</string>
+    <string name="empty_hint">Jede Nachricht enthält einen aktuellen Screenshot – frag einfach.</string>
+    <string name="resume_last">Letzte Unterhaltung fortsetzen</string>
+    <string name="needs_login">Claude möchte, dass du dich erneut anmeldest.</string>
+    <string name="remove">Entfernen</string>
+    <string name="input_hint">Nachricht an Claude…</string>
+    <string name="input_hint_screen">Frag nach deinem Bildschirm…</string>
+    <string name="stop">Stopp</string>
+    <string name="send">Senden</string>
+</resources>

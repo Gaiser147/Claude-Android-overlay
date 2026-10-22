@@ -1,0 +1,11 @@
+#!/system/bin/sh
+# Claude Code's Bash tool only accepts a shell whose path contains "bash" or "zsh", and
+# Android ships neither, so this file is that path. It runs Alpine's bash (libbashreal.so)
+# through the bundled musl loader; both live in nativeLibraryDir, where exec is allowed.
+#
+# CLAUDE_CODE_EXECPATH is dropped because the CLI sets it to process.execPath, which under
+# the loader is libmuslld.so rather than the CLI. The CLI's grep/find shell shims would then
+# run the loader as a multicall ugrep/bfs and fail; unset, they fall back to toybox.
+d=${0%/*}
+unset CLAUDE_CODE_EXECPATH
+exec "$d/libmuslld.so" --library-path "$d" --argv0 bash "$d/libbashreal.so" "$@"
