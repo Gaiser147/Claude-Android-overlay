@@ -14,6 +14,9 @@ import io.github.gaiser147.claudeoverlay.cli.ClaudeSession
 import io.github.gaiser147.claudeoverlay.cli.ModelInfo
 import io.github.gaiser147.claudeoverlay.cli.ShotFingerprint
 import io.github.gaiser147.claudeoverlay.cli.UserMessage
+import io.github.gaiser147.claudeoverlay.voice.SentenceChunker
+import io.github.gaiser147.claudeoverlay.voice.Speaker
+import io.github.gaiser147.claudeoverlay.voice.VoiceInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +57,14 @@ data class ChatUiState(
     /** A reply finished while the overlay was collapsed: the bubble shows a ✓. */
     val doneWhileCollapsed: Boolean = false,
     val expanded: Boolean = false,
+    /** The composer's text; lives here so dictation can fill it in live. */
+    val draft: String = "",
+    val listening: Boolean = false,
+    /** Microphone level while listening, 0..1. */
+    val voiceLevel: Float = 0f,
+    val speaking: Boolean = false,
+    /** Read every reply aloud, not only replies to spoken messages. */
+    val readAloud: Boolean = false,
 )
 
 /**
@@ -65,6 +76,8 @@ class ChatController(
     private val scope: CoroutineScope,
     /** The overlay window, so it can step aside for screenshots. */
     captureWindow: CaptureWindow,
+    private val voice: VoiceInput,
+    private val speaker: Speaker,
 ) {
     private val captureSequence = CaptureSequence(captureWindow)
     private val session = ClaudeSession(graph.env, graph.proxy)
@@ -78,6 +91,11 @@ class ChatController(
     private var lastSentFingerprint: LongArray? = null
     private var nextKey = 0L
     private var interrupted = false
+    /** This turn's reply is read aloud (it was spoken, or read-aloud is on). */
+    private var speakTurn = false
+    private var chunker = SentenceChunker()
+    /** What was typed before dictation started; dictated words are appended to it. */
+    private var draftBeforeVoice = ""
 
     init {
         scope.launch {
@@ -90,11 +108,13 @@ class ChatController(
                     models = models ?: it.models,
                     screenshots = graph.settings.screenshots(),
                     resumableSession = graph.settings.lastSession(),
+                    readAloud = graph.settings.readAloud(),
                 )
             }
             if (graph.auth.isLoggedIn()) startSession(null) else _state.update { it.copy(needsLogin = true) }
         }
         scope.launch { session.events.collect(::onEvent) }
+        scope.launch { speaker.speaking.collect { on -> _state.update { it.copy(speaking = on) } } }
         scope.launch {
             ControlService.instance.collect { service ->
                 accessibility = service?.takeIf { ControlService.canScreenshot }
@@ -149,14 +169,65 @@ class ChatController(
         _state.update { it.copy(pendingFiles = emptyList()) }
     }
 
-    fun send(text: String) {
+    fun setDraft(text: String) {
+        if (text.isNotEmpty()) speaker.stop()
+        _state.update { it.copy(draft = text) }
+    }
+
+    fun setReadAloud(on: Boolean) {
+        if (!on) speaker.stop()
+        _state.update { it.copy(readAloud = on) }
+        scope.launch { graph.settings.setReadAloud(on) }
+    }
+
+    fun stopSpeaking() = speaker.stop()
+
+    /** Mic button: start dictating, or finish (which sends what was said). */
+    fun toggleVoice() {
+        if (_state.value.listening) {
+            voice.stop()
+            return
+        }
+        if (_state.value.busy) return
+        speaker.stop()
+        draftBeforeVoice = _state.value.draft.trimEnd().let { if (it.isEmpty()) it else "$it " }
+        _state.update { it.copy(listening = true, voiceLevel = 0f) }
+        voice.start(object : VoiceInput.Listener {
+            override fun onPartial(text: String) = _state.update { it.copy(draft = draftBeforeVoice + text) }
+            override fun onLevel(level: Float) = _state.update { it.copy(voiceLevel = level) }
+            override fun onFinal(text: String) {
+                _state.update { it.copy(listening = false, voiceLevel = 0f) }
+                val full = (draftBeforeVoice + text).trim()
+                if (text.isBlank()) return
+                send(full, spoken = true)
+            }
+
+            override fun onError(reason: VoiceInput.Reason) {
+                _state.update { it.copy(listening = false, voiceLevel = 0f) }
+                when (reason) {
+                    VoiceInput.Reason.NoPermission ->
+                        notice("Microphone access is off. Allow it in the app's setup (Settings ⋮).", true)
+                    VoiceInput.Reason.Unavailable ->
+                        notice("No speech recognizer is installed on this phone.", true)
+                    VoiceInput.Reason.Busy -> notice("The speech recognizer is busy; try again.", false)
+                    VoiceInput.Reason.NothingHeard -> Unit
+                    VoiceInput.Reason.Other -> notice("Speech recognition failed; try again.", false)
+                }
+            }
+        })
+    }
+
+    fun send(text: String, spoken: Boolean = false) {
         val s = _state.value
         if (s.busy) return
         val files = pending.toList()
         if (text.isBlank() && files.isEmpty() && !(s.screenshots && s.canCapture)) return
         clearFiles()
         interrupted = false
-        _state.update { it.copy(busy = true, resumableSession = null) }
+        speaker.stop()
+        speakTurn = spoken || s.readAloud
+        chunker = SentenceChunker()
+        _state.update { it.copy(busy = true, resumableSession = null, draft = "") }
         scope.launch {
             val shot = if (s.screenshots) takeShot() else null
             val unchanged = shot != null && ShotFingerprint.sameScreen(shot.fingerprint, lastSentFingerprint)
@@ -189,6 +260,7 @@ class ChatController(
     }
 
     fun stop() {
+        speaker.stop()
         if (!_state.value.busy) return
         interrupted = true
         scope.launch(Dispatchers.IO) { runCatching { session.interrupt() } }
@@ -231,6 +303,8 @@ class ChatController(
     }
 
     fun close() {
+        voice.cancel()
+        speaker.shutdown()
         session.stop()
         projection?.release()
         projection = null
@@ -247,8 +321,14 @@ class ChatController(
                 _state.update { it.copy(servedModel = event.model) }
                 scope.launch { graph.settings.setLastSession(event.sessionId) }
             }
-            is ChatEvent.TextDelta -> appendText(event.text)
-            is ChatEvent.AssistantText -> appendText(event.text, newBlock = true)
+            is ChatEvent.TextDelta -> {
+                appendText(event.text)
+                speak(chunker.feed(event.text))
+            }
+            is ChatEvent.AssistantText -> {
+                appendText(event.text, newBlock = true)
+                speak(chunker.feed(event.text + "\n"))
+            }
             is ChatEvent.ToolStarted -> add { ChatItem.Tool(it, event.id, event.name, "", ToolStatus.Running) }
             is ChatEvent.ToolCall -> updateTool(event.id) { tool ->
                 tool.copy(summary = event.summary)
@@ -262,6 +342,7 @@ class ChatController(
                 scope.launch { graph.settings.setModels(event.models) }
             }
             is ChatEvent.TurnResult -> {
+                if (!interrupted) speak(chunker.flush())
                 if (event.isError && !interrupted) {
                     val text = event.text?.takeIf { it.isNotBlank() } ?: "Claude reported an error (${event.subtype})."
                     notice(text, true)
@@ -305,6 +386,10 @@ class ChatController(
             })
         }
         return if (found) Unit else null
+    }
+
+    private fun speak(sentences: List<String>) {
+        if (speakTurn && !interrupted) sentences.forEach(speaker::speak)
     }
 
     private fun add(make: (Long) -> ChatItem) = _state.update { it.copy(items = it.items + make(nextKey++)) }

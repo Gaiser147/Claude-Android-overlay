@@ -1,5 +1,6 @@
 package io.github.gaiser147.claudeoverlay.overlay
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -7,6 +8,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.media.projection.MediaProjectionManager
@@ -40,6 +42,8 @@ import io.github.gaiser147.claudeoverlay.R
 import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
 import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
 import io.github.gaiser147.claudeoverlay.ui.theme.ClaudeOverlayTheme
+import io.github.gaiser147.claudeoverlay.voice.Speaker
+import io.github.gaiser147.claudeoverlay.voice.VoiceInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -62,6 +66,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
 
     /** A MediaProjection is live, so the foreground service must keep its mediaProjection type. */
     private var projectionActive = false
+    private var inForeground = false
     private var bubbleX = 0
     private var bubbleY = 0
     private var panelX = 0
@@ -75,7 +80,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         super.onCreate()
         current = this
         wm = getSystemService(WindowManager::class.java)
-        controller = ChatController(AppGraph.get(this), lifecycleScope, captureWindow)
+        controller = ChatController(AppGraph.get(this), lifecycleScope, captureWindow, VoiceInput(this), Speaker(this))
         val (sw, sh) = screenSize()
         bubbleX = sw - dp(BUBBLE_DP) - dp(8)
         bubbleY = (sh * 0.35f).roundToInt()
@@ -97,8 +102,11 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         }
         val code = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val data = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_DATA, Intent::class.java) }
-        // Keep the mediaProjection type while a capture is live, or Android ends the projection.
-        startInForeground(data != null || projectionActive)
+        // Only (re)declare the foreground types on starts that come from the app's own screen:
+        // microphone is a while-in-use type that can't be added from the background, and a
+        // notification tap (ACTION_EXPAND) has nothing to change. Keep the mediaProjection type
+        // while a capture is live, or Android ends the projection.
+        if (!inForeground || data != null) startInForeground(data != null || projectionActive)
         if (data != null) {
             val projection = getSystemService(MediaProjectionManager::class.java).getMediaProjection(code, data)
             if (projection != null) {
@@ -211,6 +219,11 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         startActivity(Intent(this, PickFileActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
+    override fun listen() {
+        expand()
+        if (!controller.state.value.listening) controller.toggleVoice()
+    }
+
     override fun openApp() {
         collapse()
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -303,13 +316,16 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             .setContentIntent(expand)
             .addAction(0, getString(R.string.stop_overlay), stop)
             .build()
-        val type = when {
-            Build.VERSION.SDK_INT >= 34 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-                (if (withProjection) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0)
-            Build.VERSION.SDK_INT >= 29 && withProjection -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            else -> 0
-        }
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+        val projectionType = if (withProjection && Build.VERSION.SDK_INT >= 29) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        } else 0
+        // Dictation from the overlay counts as background mic use without this type.
+        val micType = if (Build.VERSION.SDK_INT >= 30 &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        ) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+        val specialType = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, projectionType or micType or specialType)
+        inForeground = true
     }
 
     private fun screenSize(): Pair<Int, Int> {

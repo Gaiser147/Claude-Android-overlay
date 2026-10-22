@@ -83,6 +83,7 @@ private fun SetupScreen() {
 
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var canNotify by remember { mutableStateOf(notificationsAllowed(context)) }
+    var canRecord by remember { mutableStateOf(micAllowed(context)) }
     var cliVersion by remember { mutableStateOf(graph.installer.installedVersion()) }
     var download by remember { mutableStateOf<Float?>(null) }
     var cliError by remember { mutableStateOf<String?>(null) }
@@ -97,6 +98,7 @@ private fun SetupScreen() {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             canOverlay = Settings.canDrawOverlays(context)
             canNotify = notificationsAllowed(context)
+            canRecord = micAllowed(context)
             refresh++
         }
     }
@@ -111,6 +113,7 @@ private fun SetupScreen() {
     }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { canNotify = it }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { canRecord = it }
     val projectionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.data != null && r.resultCode == android.app.Activity.RESULT_OK) {
             OverlayService.start(context, r.resultCode, r.data)
@@ -145,7 +148,11 @@ private fun SetupScreen() {
             }) { Text(stringResource(R.string.grant)) }
         }
 
-        Step(3, stringResource(R.string.step_cli), done = cliVersion != null && download == null,
+        Step(3, stringResource(R.string.step_microphone), done = canRecord) {
+            Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) { Text(stringResource(R.string.grant)) }
+        }
+
+        Step(4, stringResource(R.string.step_cli), done = cliVersion != null && download == null, keepOpen = true,
             detail = cliVersion?.let { stringResource(R.string.cli_installed, it) }) {
             val progress = download
             if (progress != null && progress >= 0f) {
@@ -177,7 +184,7 @@ private fun SetupScreen() {
             cliError?.let { Text(it, color = c.err, fontSize = 13.sp) }
         }
 
-        Step(4, stringResource(R.string.step_login), done = loggedIn == true, enabled = cliVersion != null) {
+        Step(5, stringResource(R.string.step_login), done = loggedIn == true, enabled = cliVersion != null) {
             when (val s = login) {
                 is LoginState.AwaitingCode -> {
                     var code by remember { mutableStateOf("") }
@@ -203,7 +210,7 @@ private fun SetupScreen() {
             }
         }
 
-        Step(5, stringResource(R.string.step_accessibility), done = accessibility != null,
+        Step(6, stringResource(R.string.step_accessibility), done = accessibility != null,
             detail = if (accessibility != null) stringResource(R.string.accessibility_on) else null) {
             Text(stringResource(R.string.accessibility_explain), color = c.muted, fontSize = 13.sp)
             Button(onClick = {
@@ -211,7 +218,7 @@ private fun SetupScreen() {
             }) { Text(stringResource(R.string.open_settings)) }
         }
 
-        Step(6, stringResource(R.string.step_start), done = false, enabled = canOverlay && cliVersion != null && loggedIn == true) {
+        Step(7, stringResource(R.string.step_start), done = false, keepOpen = true, enabled = canOverlay && cliVersion != null && loggedIn == true) {
             val shotsViaService = accessibility != null && ControlService.canScreenshot
             if (shotsViaService) {
                 Text(stringResource(R.string.screenshots_via_accessibility), color = c.muted, fontSize = 13.sp)
@@ -245,6 +252,8 @@ private fun Step(
     done: Boolean,
     enabled: Boolean = true,
     detail: String? = null,
+    /** Keep the step's controls visible once done (update, stop, …). */
+    keepOpen: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val c = LocalOverlayColors.current
@@ -264,13 +273,16 @@ private fun Step(
                 detail?.let { Text(it, color = c.muted, fontSize = 12.sp) }
             }
         }
-        if (enabled && (!done || number == 3 || number == 6)) content()
+        if (enabled && (!done || keepOpen)) content()
     }
 }
 
 private fun notificationsAllowed(context: android.content.Context) =
     Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+private fun micAllowed(context: android.content.Context) =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
 private fun openUrl(context: android.content.Context, url: String) {
     try {

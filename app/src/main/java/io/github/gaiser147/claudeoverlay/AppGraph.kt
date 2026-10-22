@@ -43,6 +43,7 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     private val lastSessionKey = stringPreferencesKey("last_session")
     private val screenshotsKey = booleanPreferencesKey("screenshots")
     private val modelsKey = stringPreferencesKey("models")
+    private val readAloudKey = booleanPreferencesKey("read_aloud")
 
     val model: Flow<String> = store.data.map { it[modelKey] ?: ClaudeSession.DEFAULT_MODEL }
     val screenshots: Flow<Boolean> = store.data.map { it[screenshotsKey] ?: true }
@@ -55,6 +56,9 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     suspend fun models(): List<ModelInfo>? = store.data.first()[modelsKey]?.let { raw ->
         runCatching { ModelInfo.parseList(Json.parseToJsonElement(raw).jsonArray) }.getOrNull()
     }
+
+    suspend fun readAloud(): Boolean = store.data.first()[readAloudKey] ?: false
+    suspend fun setReadAloud(value: Boolean) = store.edit { it[readAloudKey] = value }
 
     suspend fun setModels(models: List<ModelInfo>) = store.edit { it[modelsKey] = ModelInfo.toJson(models) }
 

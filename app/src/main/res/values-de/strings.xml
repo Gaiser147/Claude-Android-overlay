@@ -47,4 +47,10 @@
     <string name="open_settings">Einstellungen öffnen</string>
     <string name="accessibility_on">Aktiv</string>
     <string name="screenshots_via_accessibility">Screenshots kommen über die Bedienungshilfe – keine Bildschirmaufnahme-Abfrage nötig.</string>
+    <string name="listening">Ich höre zu…</string>
+    <string name="speak">Sprechen</string>
+    <string name="stop_listening">Zuhören beenden</string>
+    <string name="stop_speaking">Vorlesen stoppen</string>
+    <string name="read_aloud">Antworten immer vorlesen</string>
+    <string name="step_microphone">Mikrofon erlauben (um mit Claude zu sprechen)</string>
 </resources>

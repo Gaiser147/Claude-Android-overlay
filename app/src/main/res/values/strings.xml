@@ -49,4 +49,10 @@
     <string name="open_settings">Open settings</string>
     <string name="accessibility_on">On</string>
     <string name="screenshots_via_accessibility">Screenshots come from the accessibility service; no screen-recording prompt needed.</string>
+    <string name="listening">Listening…</string>
+    <string name="speak">Speak</string>
+    <string name="stop_listening">Stop listening</string>
+    <string name="stop_speaking">Stop reading aloud</string>
+    <string name="read_aloud">Always read replies aloud</string>
+    <string name="step_microphone">Allow the microphone (to talk to Claude)</string>
 </resources>

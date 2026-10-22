@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,11 +34,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Screenshot
 import androidx.compose.material.icons.filled.Stop
@@ -86,6 +89,8 @@ interface OverlayWindowActions {
     fun collapse()
     fun pickFiles()
     fun openApp()
+    /** Opens the panel and starts dictation. */
+    fun listen()
 }
 
 /** The collapsed orb: tap to open, drag to move, ✓ when a reply finished while tucked away. */
@@ -106,7 +111,8 @@ fun Bubble(state: ChatUiState, actions: OverlayWindowActions) {
             .background(c.accent)
             .alpha(if (state.busy) busyAlpha else 1f)
             .pointerInput(Unit) { detectDragGestures { change, drag -> change.consume(); actions.moveBy(drag.x, drag.y) } }
-            .clickable { actions.expand() },
+            // Long press: open and start listening right away, like holding an assistant button.
+            .combinedClickable(onClick = actions::expand, onLongClick = actions::listen),
         contentAlignment = Alignment.Center,
     ) {
         Text("✳", color = c.onAccent, fontSize = 26.sp)
@@ -176,6 +182,11 @@ private fun Header(
             Text("${state.contextTokens / 1000}k", color = c.faint, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Spacer(Modifier.weight(1f))
+        if (state.speaking) {
+            IconButton(onClick = controller::stopSpeaking) {
+                Icon(Icons.AutoMirrored.Filled.VolumeOff, stringResource(R.string.stop_speaking), tint = c.accent)
+            }
+        }
         IconButton(onClick = { controller.setScreenshots(!state.screenshots) }, enabled = state.canCapture) {
             Icon(
                 Icons.Default.Screenshot, stringResource(R.string.toggle_screenshots),
@@ -188,6 +199,10 @@ private fun Header(
                 DropdownMenuItem(text = { Text(stringResource(R.string.new_conversation)) }, onClick = {
                     moreMenu = false; controller.newConversation()
                 })
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.read_aloud) + if (state.readAloud) "  ✓" else "") },
+                    onClick = { moreMenu = false; controller.setReadAloud(!state.readAloud) },
+                )
                 DropdownMenuItem(text = { Text(stringResource(R.string.attach_files)) }, onClick = {
                     moreMenu = false; actions.pickFiles()
                 })
@@ -400,13 +415,8 @@ private fun LoginBanner(controller: ChatController, actions: OverlayWindowAction
 @Composable
 private fun Composer(state: ChatUiState, controller: ChatController, actions: OverlayWindowActions) {
     val c = LocalOverlayColors.current
-    var text by rememberSaveable { mutableStateOf("") }
-    val send = {
-        if (!state.busy) {
-            controller.send(text)
-            text = ""
-        }
-    }
+    val text = state.draft
+    val send = { if (!state.busy) controller.send(text) }
     Column(Modifier.fillMaxWidth().padding(8.dp)) {
         if (state.pendingFiles.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -422,7 +432,7 @@ private fun Composer(state: ChatUiState, controller: ChatController, actions: Ov
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
                 .background(c.field)
-                .border(1.dp, c.border, RoundedCornerShape(14.dp))
+                .border(1.dp, if (state.listening) c.accent else c.border, RoundedCornerShape(14.dp))
                 .padding(start = 4.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -430,13 +440,19 @@ private fun Composer(state: ChatUiState, controller: ChatController, actions: Ov
             Box(Modifier.weight(1f).padding(vertical = 10.dp)) {
                 if (text.isEmpty()) {
                     Text(
-                        stringResource(if (state.screenshots && state.canCapture) R.string.input_hint_screen else R.string.input_hint),
+                        stringResource(
+                            when {
+                                state.listening -> R.string.listening
+                                state.screenshots && state.canCapture -> R.string.input_hint_screen
+                                else -> R.string.input_hint
+                            }
+                        ),
                         color = c.faint, fontSize = 14.sp,
                     )
                 }
                 BasicTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = controller::setDraft,
                     textStyle = TextStyle(color = c.text, fontSize = 14.sp),
                     cursorBrush = SolidColor(c.accent),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -445,10 +461,14 @@ private fun Composer(state: ChatUiState, controller: ChatController, actions: Ov
                     modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp),
                 )
             }
-            if (state.busy) {
-                IconButton(onClick = controller::stop) { Icon(Icons.Default.Stop, stringResource(R.string.stop), tint = c.accent) }
-            } else {
-                IconButton(onClick = send) {
+            when {
+                state.busy -> IconButton(onClick = controller::stop) {
+                    Icon(Icons.Default.Stop, stringResource(R.string.stop), tint = c.accent)
+                }
+                state.listening -> MicButton(listening = true, level = state.voiceLevel, onClick = controller::toggleVoice)
+                text.isBlank() && state.pendingFiles.isEmpty() ->
+                    MicButton(listening = false, level = 0f, onClick = controller::toggleVoice)
+                else -> IconButton(onClick = send) {
                     Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.send), tint = c.accent)
                 }
             }
@@ -460,6 +480,28 @@ private fun Composer(state: ChatUiState, controller: ChatController, actions: Ov
                 modifier = Modifier
                     .pointerInput(Unit) { detectDragGestures { change, drag -> change.consume(); actions.resizeBy(drag.x, drag.y) } }
                     .padding(start = 16.dp, top = 2.dp),
+            )
+        }
+    }
+}
+
+/** Mic button; while listening, a ring around it follows the voice level. */
+@Composable
+private fun MicButton(listening: Boolean, level: Float, onClick: () -> Unit) {
+    val c = LocalOverlayColors.current
+    IconButton(onClick = onClick) {
+        Box(contentAlignment = Alignment.Center) {
+            if (listening) {
+                Box(
+                    Modifier
+                        .size((28 + 12 * level).dp)
+                        .clip(CircleShape)
+                        .background(c.accent.copy(alpha = 0.25f))
+                )
+            }
+            Icon(
+                Icons.Default.Mic, stringResource(if (listening) R.string.stop_listening else R.string.speak),
+                tint = if (listening) c.accent else c.muted,
             )
         }
     }
