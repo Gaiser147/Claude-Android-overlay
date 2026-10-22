@@ -106,12 +106,12 @@ object Stylus {
         }
     }
 
-    /** Splits the plan into binder-sized pieces, only between strokes. */
+    /** Splits the plan into binder-sized pieces, only while the pen is in the air. */
     internal fun chunks(events: List<PenEvent>, max: Int = CHUNK_EVENTS): List<List<PenEvent>> {
         val out = mutableListOf<List<PenEvent>>()
         var current = mutableListOf<PenEvent>()
         for (e in events) {
-            if (e.action == StylusPlan.DOWN && current.size >= max) {
+            if (e.action == StylusPlan.HOVER_ENTER && current.size >= max) {
                 out += current
                 current = mutableListOf()
             }

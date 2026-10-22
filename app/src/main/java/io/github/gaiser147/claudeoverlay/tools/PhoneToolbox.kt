@@ -33,6 +33,8 @@ interface PhoneHost {
      * or null if Android refused.
      */
     suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean = false): InputKind?
+    /** Whether real pen input is available right now. */
+    fun penState(): PenState
     /** Types into the focused field; returns a short description of what happened. */
     suspend fun typeText(text: String, submit: Boolean): String
     suspend fun pressKey(key: String): Boolean
@@ -43,6 +45,9 @@ interface PhoneHost {
 
 /** How a gesture reached the app: as a finger (accessibility) or as a pen (Shizuku). */
 enum class InputKind { Finger, Stylus }
+
+/** Real pen input: [Ready], never set up, or set up but [Stopped] / missing [NoPermission]. */
+enum class PenState { Ready, NotSetUp, Stopped, NoPermission }
 
 /**
  * Claude's tools for the phone, served over MCP: draw on the screen (always available) and
@@ -58,6 +63,8 @@ class PhoneToolbox(
     private val sleep: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
 ) : Toolbox {
     @Volatile private var geometry: ShotGeometry? = null
+    /** The pen worked earlier: the app on screen likely draws only with it. */
+    @Volatile private var penWorked = false
 
     override fun definitions(): List<JsonObject> = DEFINITIONS
 
@@ -145,10 +152,17 @@ class PhoneToolbox(
 
     /** Draws or writes with the pen when it's set up, and says which input the app got. */
     private suspend fun penAct(what: String, strokes: List<Stroke>): ToolResult {
+        val pen = host.penState()
+        // Once the pen has worked, finger touches would only pan a pen-only canvas: stop instead.
+        if (penWorked && pen != PenState.Ready) return ToolResult.text("Nothing was drawn: ${penLost(pen)}", true)
         val kind = gestureOrFail(strokes, preferStylus = true)
+        if (kind == InputKind.Stylus) penWorked = true
         sleep(settleMs)
-        return screenshotResult("$what ${if (kind == InputKind.Stylus) STYLUS_NOTE else FINGER_NOTE}. Screen now")
+        val note = if (kind == InputKind.Stylus) STYLUS_NOTE else fingerNote(pen)
+        return screenshotResult("$what ${strokes.size.strokes()} $note. Screen now")
     }
+
+    private fun Int.strokes() = if (this == 1) "as 1 stroke" else "as $this strokes"
 
     private fun listApps(): ToolResult = ToolResult.text(
         host.listApps().sortedBy { it.first.lowercase() }.joinToString("\n") { (label, pkg) -> "$label ($pkg)" }
@@ -168,7 +182,7 @@ class PhoneToolbox(
             Strokes.drawn(pts)
         }
         if (strokes.size > MAX_STROKES) throw BadArgs("at most $MAX_STROKES strokes per call")
-        return penAct("Drew ${strokes.size} stroke(s)", strokes)
+        return penAct("Drew", strokes)
     }
 
     private suspend fun handwriting(args: JsonObject): ToolResult {
@@ -179,6 +193,10 @@ class PhoneToolbox(
         val height = args.float("letter_height") ?: DEFAULT_LETTER_HEIGHT
         val maxWidth = args.float("max_width")
         val font = if (args.optStr("style") == "cursive") cursive else print
+        font.missing(text).takeIf { it.isNotEmpty() }?.let { chars ->
+            throw BadArgs("Nothing was written: the handwriting font has no ${chars.joinToString(" ")}. " +
+                "Spell it differently or draw it with draw_strokes.")
+        }
         // Lay out in screenshot space, then map every point, so wrapping matches what Claude sees.
         val strokes = font.layout(text, x, y, height, maxWidth).map { s ->
             Strokes.drawn(s.map { p -> g.toScreen(p.x, p.y) })
@@ -213,14 +231,30 @@ class PhoneToolbox(
 
         const val STYLUS_NOTE = "with the stylus (real pen input)"
 
+        /** Why the pen, once set up, can't draw now — in words the model can pass on. */
+        fun penLost(pen: PenState) = when (pen) {
+            PenState.NoPermission -> "real pen input lost its Shizuku permission. Ask the user to allow it again " +
+                "in the Claude Overlay app (setup step 'Real stylus')."
+            else -> "real pen input stopped: the Shizuku app isn't running (it stops when the device restarts, " +
+                "and on some devices when wireless debugging turns off). Ask the user to open Shizuku and start it " +
+                "again, then try once more."
+        }
+
         /**
          * Without Shizuku, apps can inject touches only as a finger, and note apps on pen
          * devices often pan with the finger instead of drawing.
          */
-        const val FINGER_NOTE = "as finger touches (real pen input isn't set up). Check the screenshot: if no ink " +
-            "appeared or the page only moved, the app draws with the stylus only. Then tell the user they can set up " +
-            "real pen input in the Claude Overlay app (setup step 'Real stylus', via the Shizuku app), allow drawing " +
-            "with the finger in the note app, or let you write with the app's text tool (keyboard icon) and type_text"
+        fun fingerNote(pen: PenState) = "as finger touches (" +
+            (if (pen == PenState.NotSetUp) "real pen input isn't set up" else penLost(pen)) +
+            "). Check the screenshot: if no ink appeared or the page only moved, the app draws with the stylus only. " +
+            "Then tell the user they can set up real pen input in the Claude Overlay app (setup step 'Real stylus', " +
+            "via the Shizuku app), allow drawing with the finger in the note app, or let you write with the app's " +
+            "text tool (keyboard icon) and type_text"
+
+        /** How pen apps treat what Claude draws, so it can correct mistakes without collateral damage. */
+        private const val PEN_APP_NOTE = " In note apps every stroke is its own undo step (the result says how many " +
+            "strokes were drawn), and the stroke eraser removes whole strokes, so undo right after a mistake rather " +
+            "than erasing near other ink."
 
         private const val XY = """{"type":"number","description":"pixels in the latest screenshot"}"""
         private const val POINT = """{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"[x, y] in screenshot pixels"}"""
@@ -284,12 +318,12 @@ class PhoneToolbox(
             ),
             tool(
                 "draw_strokes",
-                "Draw with a finger in the app on screen (e.g. on a Samsung Notes canvas), like a pen: each stroke is a polyline drawn in one movement, the finger lifts between strokes. Returns a screenshot afterwards. Requires phone control.",
+                "Draw in the app on screen (e.g. on a Samsung Notes canvas) like a pen — with the real stylus when that's set up, else with a finger: each stroke is a polyline drawn in one movement, the pen lifts between strokes. Draw long curves as a few strokes so a part can be fixed alone. Returns a screenshot afterwards. Requires phone control." + PEN_APP_NOTE,
                 """{"type":"object","required":["strokes"],"properties":{"strokes":{"type":"array","items":{"type":"array","items":$POINT}}}}""",
             ),
             tool(
                 "write_handwriting",
-                "Write text by hand into the app on screen (e.g. a Samsung Notes page) as pen strokes, starting with its top-left at (x, y). Use when the app expects drawing rather than typing; for text fields use type_text. Returns a screenshot afterwards. Requires phone control.",
+                "Write text by hand into the app on screen (e.g. a Samsung Notes page) as pen strokes, starting with its top-left at (x, y). Use when the app expects drawing rather than typing; for text fields use type_text. Besides Latin letters with accents, it writes Greek letters (π, α, Δ…), math symbols (± × ÷ · − ≠ ≈ ≤ ≥ √ ∫ ∂ ∞ ° → ∈ ∩ ∪ ⊥ ∠) and superscripts/subscripts (x², a₁); it refuses text with other characters before drawing anything. Returns a screenshot afterwards. Requires phone control." + PEN_APP_NOTE,
                 """{"type":"object","required":["text","x","y"],"properties":{"text":{"type":"string"},"x":$XY,"y":$XY,
                   "letter_height":{"type":"number","description":"capital letter height in screenshot pixels (default 28)"},
                   "max_width":{"type":"number","description":"wrap lines at this width in screenshot pixels"},

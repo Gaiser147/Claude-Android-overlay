@@ -33,22 +33,23 @@ class HersheyFont(lines: List<String>) {
             var penX = x
             for (word in paragraph.split(' ')) {
                 val chars = expand(word)
-                val wordWidth = chars.sumOf { advance(it.base) } * scale
+                val wordWidth = chars.sumOf { advance(it.base) * it.size.toDouble() }.toFloat() * scale
                 if (maxWidth != null && penX > x && penX + wordWidth - x > maxWidth) {
                     penX = x
                     lineTop += lineAdvance
                 }
                 for (ch in chars) {
                     val g = glyphs[ch.base] ?: glyphs['?'] ?: continue
-                    val originX = penX - g.left * scale
-                    val originY = lineTop + TOP_UNITS * scale
-                    g.strokes.forEach { s -> out += s.map { (gx, gy) -> Pt(originX + gx * scale, originY + gy * scale) } }
+                    val s = scale * ch.size
+                    val originX = penX - g.left * s
+                    val originY = lineTop + (TOP_UNITS + ch.rise) * scale
+                    g.strokes.forEach { stroke -> out += stroke.map { (gx, gy) -> Pt(originX + gx * s, originY + gy * s) } }
                     ch.mark?.let { mark ->
                         val top = if (ch.base.isUpperCase()) CAP_MARK_Y else LOWER_MARK_Y
-                        val cx = originX + (g.left + g.right) / 2f * scale
-                        out += markStrokes(mark, cx, originY + top * scale, scale)
+                        val cx = originX + (g.left + g.right) / 2f * s
+                        out += markStrokes(mark, cx, originY + top * s, s)
                     }
-                    penX += (g.right - g.left) * scale
+                    penX += (g.right - g.left) * s
                 }
                 penX += advance(' ') * scale
             }
@@ -57,21 +58,40 @@ class HersheyFont(lines: List<String>) {
         return out
     }
 
+    /** The characters of [text] this font can't write; they come out as '?'. */
+    fun missing(text: String): Set<Char> =
+        text.filter { it != '\n' && it != ' ' && expand(it.toString()).any { d -> d.base == '?' && it != '?' } }.toSet()
+
     private fun advance(c: Char): Int = (glyphs[c] ?: glyphs['?'])?.let { it.right - it.left } ?: 0
 
-    /** A character to draw: a plain glyph, plus an accent the font lacks drawn on top. */
-    private class Drawn(val base: Char, val mark: Char?)
+    /**
+     * A character to draw: a glyph at [size] times the normal size, its origin [rise] units
+     * lower (negative: higher), plus an accent the font lacks drawn on top.
+     */
+    private class Drawn(val base: Char, val mark: Char? = null, val size: Float = 1f, val rise: Float = 0f)
 
-    /** Umlauts and accents as base letter + mark; ß as "ss"; anything else unknown as '?'. */
+    /**
+     * Umlauts and accents as base letter + mark; ß as "ss"; ² and ₂ as small raised or lowered
+     * characters; other compatibility forms (ﬁ, ½…) by their plain spelling; anything else as '?'.
+     */
     private fun expand(word: String): List<Drawn> = word.flatMap { c ->
+        val sup = SUPERSCRIPTS.indexOf(c)
+        val sub = SUBSCRIPTS.indexOf(c)
         when {
-            glyphs.containsKey(c) -> listOf(Drawn(c, null))
-            c == 'ß' -> listOf(Drawn('s', null), Drawn('s', null))
+            glyphs.containsKey(c) -> listOf(Drawn(c))
+            c == 'ß' -> listOf(Drawn('s'), Drawn('s'))
+            sup >= 0 -> listOf(Drawn(SCRIPT_BASES[sup], size = SCRIPT_SIZE, rise = SUPERSCRIPT_RISE))
+            sub >= 0 -> listOf(Drawn(SCRIPT_BASES[sub], size = SCRIPT_SIZE, rise = SUBSCRIPT_RISE))
             else -> {
                 val nfd = Normalizer.normalize(c.toString(), Normalizer.Form.NFD)
                 val base = nfd.first()
                 val mark = nfd.drop(1).firstOrNull()
-                if (glyphs.containsKey(base)) listOf(Drawn(base, mark?.takeIf { it in MARKS })) else listOf(Drawn('?', null))
+                val compat = Normalizer.normalize(c.toString(), Normalizer.Form.NFKC)
+                when {
+                    glyphs.containsKey(base) -> listOf(Drawn(base, mark?.takeIf { it in MARKS }))
+                    compat != c.toString() && compat.all { glyphs.containsKey(it) } -> compat.map { Drawn(it) }
+                    else -> listOf(Drawn('?'))
+                }
             }
         }
     }
@@ -100,6 +120,16 @@ class HersheyFont(lines: List<String>) {
         private const val CIRCUMFLEX = '̂'
         private const val TILDE = '̃'
         private val MARKS = setOf(DIAERESIS, ACUTE, GRAVE, CIRCUMFLEX, TILDE)
+
+        // Superscripts and subscripts: same position in each string as their plain character.
+        private const val SCRIPT_BASES = "0123456789+-=()nix"
+        private const val SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱˣ"
+        private const val SUBSCRIPTS = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₙᵢₓ"
+        private const val SCRIPT_SIZE = 0.6f
+        // Origin shifts, in units of the normal size, that put the small baseline (9 × size
+        // below its origin) at y = -2, just under the x-height (-5), or at 13, below the baseline (9).
+        private const val SUPERSCRIPT_RISE = -2f - 9f * SCRIPT_SIZE
+        private const val SUBSCRIPT_RISE = 13f - 9f * SCRIPT_SIZE
 
         private fun parse(data: String): Glyph {
             val left = data[0] - 'R'

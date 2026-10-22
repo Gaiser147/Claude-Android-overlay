@@ -33,13 +33,14 @@ class FakeHost(var blocked: String? = null) : PhoneHost {
     }
     override suspend fun clearAnnotations() { annotations = emptyList() }
     override fun controlBlockedReason() = blocked
-    /** Whether real pen input is "set up" on this fake phone. */
-    var stylusReady = false
+    /** Real pen input on this fake phone. */
+    var pen = PenState.NotSetUp
     var lastKind: InputKind? = null
     override suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean): InputKind {
         gestures += strokes
-        return (if (preferStylus && stylusReady) InputKind.Stylus else InputKind.Finger).also { lastKind = it }
+        return (if (preferStylus && pen == PenState.Ready) InputKind.Stylus else InputKind.Finger).also { lastKind = it }
     }
+    override fun penState() = pen
     override suspend fun typeText(text: String, submit: Boolean) = "Typed ${text.length} characters"
     override suspend fun pressKey(key: String) = key in setOf("back", "home")
     override fun listApps() = listOf("Samsung Notes" to "com.samsung.android.app.notes", "Chrome" to "com.android.chrome")
@@ -112,7 +113,7 @@ class PhoneToolboxTest {
     @Test
     fun `writing uses the pen when it's set up and says so`() = runTest {
         box.call("screenshot", args("{}"))
-        host.stylusReady = true
+        host.pen = PenState.Ready
         val pen = box.call("write_handwriting", args("""{"text":"Hi","x":10,"y":10}"""))
         assertEquals(InputKind.Stylus, host.lastKind)
         assertTrue(pen.content[0]["text"]!!.jsonPrimitive.content.contains("stylus"))
@@ -127,9 +128,39 @@ class PhoneToolboxTest {
     }
 
     @Test
+    fun `once the pen worked, losing it stops drawing instead of panning with the finger`() = runTest {
+        box.call("screenshot", args("{}"))
+        host.pen = PenState.Ready
+        box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]]]}"""))
+        host.pen = PenState.Stopped
+        val drawn = host.gestures.size
+        val r = box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]]]}"""))
+        assertTrue(r.isError)
+        assertTrue(r.content[0]["text"]!!.jsonPrimitive.content.contains("start it again"))
+        assertEquals(drawn, host.gestures.size)
+    }
+
+    @Test
+    fun `results count strokes, so Claude knows how many undos a mistake takes`() = runTest {
+        box.call("screenshot", args("{}"))
+        val r = box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]],[[30,30],[40,40]]]}"""))
+        assertTrue(r.content[0]["text"]!!.jsonPrimitive.content.startsWith("Drew as 2 strokes"))
+    }
+
+    @Test
+    fun `handwriting refuses characters the font lacks before drawing anything`() = runTest {
+        box.call("screenshot", args("{}"))
+        val r = box.call("write_handwriting", args("""{"text":"x ∀ 2π ✓","x":10,"y":10}"""))
+        assertTrue(r.isError)
+        val text = r.content[0]["text"]!!.jsonPrimitive.content
+        assertTrue(text.contains("∀") && text.contains("✓") && !text.contains("π"))
+        assertTrue(host.gestures.isEmpty())
+    }
+
+    @Test
     fun `taps stay finger touches even when the pen is set up`() = runTest {
         box.call("screenshot", args("{}"))
-        host.stylusReady = true
+        host.pen = PenState.Ready
         box.call("tap", args("""{"x":1,"y":1}"""))
         assertEquals(InputKind.Finger, host.lastKind)
     }
@@ -160,6 +191,30 @@ class HersheyFontTest {
         assertTrue(f.layout("ö", 0f, 0f, 21f).size > f.layout("o", 0f, 0f, 21f).size)
         assertEquals(f.layout("ss", 0f, 0f, 21f), f.layout("ß", 0f, 0f, 21f))
         assertEquals(f.layout("?", 0f, 0f, 21f), f.layout("€", 0f, 0f, 21f))
+    }
+
+    @Test
+    fun `greek letters and math symbols have glyphs in both styles`() {
+        for (name in listOf("romans", "scripts")) {
+            val f = font(name)
+            assertEquals(emptySet<Char>(), f.missing("π α β γ Δ Σ ω θ μ ± × ÷ · − ≠ ≈ ≤ ≥ √ ∫ ∂ ∞ ° → ∈ ∩ ∪ ⊥ ∠ ﬁ ½"))
+            assertEquals(setOf('∀', '✓'), f.missing("∀x ✓ ?"))
+            assertTrue(f.layout("≈", 0f, 0f, 21f).size >= 2)
+        }
+    }
+
+    @Test
+    fun `superscripts and subscripts are small, raised or lowered`() {
+        val f = font("romans")
+        val two = f.layout("2", 0f, 0f, 21f).flatten()
+        val sup = f.layout("²", 0f, 0f, 21f).flatten()
+        val sub = f.layout("₂", 0f, 0f, 21f).flatten()
+        val height = { pts: List<Pt> -> pts.maxOf { it.y } - pts.minOf { it.y } }
+        assertEquals(height(two) * 0.6f, height(sup), 0.5f)
+        assertTrue(sup.maxOf { it.y } < two.maxOf { it.y } - 8f)
+        assertTrue(sub.maxOf { it.y } > two.maxOf { it.y })
+        // x² is narrower than x2.
+        assertTrue(f.layout("x²", 0f, 0f, 21f).flatten().maxOf { it.x } < f.layout("x2", 0f, 0f, 21f).flatten().maxOf { it.x })
     }
 
     @Test

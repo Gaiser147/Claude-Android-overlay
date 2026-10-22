@@ -46,6 +46,7 @@ import io.github.gaiser147.claudeoverlay.tools.Annotation
 import io.github.gaiser147.claudeoverlay.stylus.Stylus
 import io.github.gaiser147.claudeoverlay.tools.HersheyFont
 import io.github.gaiser147.claudeoverlay.tools.InputKind
+import io.github.gaiser147.claudeoverlay.tools.PenState
 import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
 import io.github.gaiser147.claudeoverlay.tools.PhoneHost
 import io.github.gaiser147.claudeoverlay.tools.PhoneToolbox
@@ -363,6 +364,16 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
                 }
             } finally {
                 stepAside(false)
+            }
+        }
+
+        override fun penState(): PenState {
+            Stylus.refresh()
+            return when (Stylus.state.value) {
+                Stylus.State.Ready -> PenState.Ready
+                Stylus.State.NotInstalled -> PenState.NotSetUp
+                Stylus.State.NotRunning -> PenState.Stopped
+                Stylus.State.NeedsPermission -> PenState.NoPermission
             }
         }
 
