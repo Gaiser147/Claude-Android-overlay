@@ -59,6 +59,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import io.github.gaiser147.claudeoverlay.access.ControlService
 import io.github.gaiser147.claudeoverlay.cli.AuthManager.LoginState
 import io.github.gaiser147.claudeoverlay.overlay.OverlayService
+import io.github.gaiser147.claudeoverlay.stylus.Stylus
 import io.github.gaiser147.claudeoverlay.ui.theme.ClaudeOverlayTheme
 import io.github.gaiser147.claudeoverlay.ui.theme.LocalOverlayColors
 import kotlinx.coroutines.launch
@@ -96,10 +97,12 @@ private fun SetupScreen() {
     val login by graph.auth.state.collectAsState()
     var withScreenshots by remember { mutableStateOf(true) }
     val accessibility by ControlService.instance.collectAsState()
+    val stylus by Stylus.state.collectAsState()
 
     // Permissions are granted in Settings, so re-check whenever we come back.
     LaunchedEffect(Unit) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            Stylus.refresh()
             canOverlay = Settings.canDrawOverlays(context)
             canNotify = notificationsAllowed(context)
             canRecord = micAllowed(context)
@@ -253,7 +256,28 @@ private fun SetupScreen() {
             }) { Text(stringResource(R.string.grant)) }
         }
 
-        Step(8, stringResource(R.string.step_start), done = false, keepOpen = true, enabled = canOverlay && cliVersion != null && loggedIn == true) {
+        Step(8, stringResource(R.string.step_stylus), done = stylus == Stylus.State.Ready,
+            detail = if (stylus == Stylus.State.Ready) stringResource(R.string.stylus_ready) else stringResource(R.string.optional)) {
+            Text(stringResource(R.string.stylus_explain), color = c.muted, fontSize = 13.sp)
+            when (stylus) {
+                Stylus.State.NotInstalled -> Button(onClick = {
+                    openUrl(context, "https://play.google.com/store/apps/details?id=${Stylus.SHIZUKU_PACKAGE}")
+                }) { Text(stringResource(R.string.stylus_install)) }
+                Stylus.State.NotRunning -> {
+                    Text(stringResource(R.string.stylus_start_hint), color = c.muted, fontSize = 13.sp)
+                    Button(onClick = {
+                        context.packageManager.getLaunchIntentForPackage(Stylus.SHIZUKU_PACKAGE)
+                            ?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    }) { Text(stringResource(R.string.stylus_open)) }
+                }
+                Stylus.State.NeedsPermission -> Button(onClick = Stylus::requestPermission) {
+                    Text(stringResource(R.string.grant))
+                }
+                Stylus.State.Ready -> Unit
+            }
+        }
+
+        Step(9, stringResource(R.string.step_start), done = false, keepOpen = true, enabled = canOverlay && cliVersion != null && loggedIn == true) {
             val shotsViaService = accessibility != null && ControlService.canScreenshot
             if (shotsViaService) {
                 Text(stringResource(R.string.screenshots_via_accessibility), color = c.muted, fontSize = 13.sp)

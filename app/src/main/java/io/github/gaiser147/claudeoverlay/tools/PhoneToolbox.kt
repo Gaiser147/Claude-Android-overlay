@@ -27,8 +27,12 @@ interface PhoneHost {
 
     /** Null when Claude may operate the phone, else why not (in words for the model). */
     fun controlBlockedReason(): String?
-    /** Performs strokes one after another (finger lifted in between); false if Android refused. */
-    suspend fun gesture(strokes: List<Stroke>): Boolean
+    /**
+     * Performs strokes one after another (finger or pen lifted in between). With
+     * [preferStylus], as real pen input when that's set up. Returns how they were delivered,
+     * or null if Android refused.
+     */
+    suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean = false): InputKind?
     /** Types into the focused field; returns a short description of what happened. */
     suspend fun typeText(text: String, submit: Boolean): String
     suspend fun pressKey(key: String): Boolean
@@ -36,6 +40,9 @@ interface PhoneHost {
     /** Opens the best match for [query] (label or package); returns what was opened, or null. */
     suspend fun openApp(query: String): String?
 }
+
+/** How a gesture reached the app: as a finger (accessibility) or as a pen (Shizuku). */
+enum class InputKind { Finger, Stylus }
 
 /**
  * Claude's tools for the phone, served over MCP: draw on the screen (always available) and
@@ -133,8 +140,14 @@ class PhoneToolbox(
         return screenshotResult("$what. Screen now")
     }
 
-    private suspend fun gestureOrFail(strokes: List<Stroke>) {
-        if (!host.gesture(strokes)) throw BadArgs("Android didn't perform the gesture.")
+    private suspend fun gestureOrFail(strokes: List<Stroke>, preferStylus: Boolean = false): InputKind =
+        host.gesture(strokes, preferStylus) ?: throw BadArgs("Android didn't perform the gesture.")
+
+    /** Draws or writes with the pen when it's set up, and says which input the app got. */
+    private suspend fun penAct(what: String, strokes: List<Stroke>): ToolResult {
+        val kind = gestureOrFail(strokes, preferStylus = true)
+        sleep(settleMs)
+        return screenshotResult("$what ${if (kind == InputKind.Stylus) STYLUS_NOTE else FINGER_NOTE}. Screen now")
     }
 
     private fun listApps(): ToolResult = ToolResult.text(
@@ -155,7 +168,7 @@ class PhoneToolbox(
             Strokes.drawn(pts)
         }
         if (strokes.size > MAX_STROKES) throw BadArgs("at most $MAX_STROKES strokes per call")
-        return act("Drew ${strokes.size} stroke(s) $FINGER_NOTE") { gestureOrFail(strokes) }
+        return penAct("Drew ${strokes.size} stroke(s)", strokes)
     }
 
     private suspend fun handwriting(args: JsonObject): ToolResult {
@@ -171,7 +184,7 @@ class PhoneToolbox(
             Strokes.drawn(s.map { p -> g.toScreen(p.x, p.y) })
         }
         if (strokes.size > MAX_HANDWRITING_STROKES) throw BadArgs("text too long for one call; split it up")
-        return act("Wrote \"${text.take(40)}\" $FINGER_NOTE") { gestureOrFail(strokes) }
+        return penAct("Wrote \"${text.take(40)}\"", strokes)
     }
 
     private fun point(args: JsonObject, kx: String, ky: String): Pt {
@@ -198,14 +211,16 @@ class PhoneToolbox(
         const val DEFAULT_LETTER_HEIGHT = 28f
         const val SETTLE_AFTER_DRAW_MS = 250L
 
+        const val STYLUS_NOTE = "with the stylus (real pen input)"
+
         /**
-         * Android lets apps inject touches only as a finger, never as a stylus, and note apps
-         * on pen devices often pan with the finger instead of drawing.
+         * Without Shizuku, apps can inject touches only as a finger, and note apps on pen
+         * devices often pan with the finger instead of drawing.
          */
-        const val FINGER_NOTE = "as finger touches. Check the screenshot: if no ink appeared or the page only moved, " +
-            "the app draws with the stylus only. Then tell the user to allow drawing with the finger in the app " +
-            "(Samsung Notes: tap the active pen in the toolbar or open the note's ⋮ menu and turn on drawing with " +
-            "finger / turn off 'S Pen only'), or write with the app's text tool (keyboard icon) and type_text instead"
+        const val FINGER_NOTE = "as finger touches (real pen input isn't set up). Check the screenshot: if no ink " +
+            "appeared or the page only moved, the app draws with the stylus only. Then tell the user they can set up " +
+            "real pen input in the Claude Overlay app (setup step 'Real stylus', via the Shizuku app), allow drawing " +
+            "with the finger in the note app, or let you write with the app's text tool (keyboard icon) and type_text"
 
         private const val XY = """{"type":"number","description":"pixels in the latest screenshot"}"""
         private const val POINT = """{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"[x, y] in screenshot pixels"}"""

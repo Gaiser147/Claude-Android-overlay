@@ -33,7 +33,13 @@ class FakeHost(var blocked: String? = null) : PhoneHost {
     }
     override suspend fun clearAnnotations() { annotations = emptyList() }
     override fun controlBlockedReason() = blocked
-    override suspend fun gesture(strokes: List<Stroke>): Boolean { gestures += strokes; return true }
+    /** Whether real pen input is "set up" on this fake phone. */
+    var stylusReady = false
+    var lastKind: InputKind? = null
+    override suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean): InputKind {
+        gestures += strokes
+        return (if (preferStylus && stylusReady) InputKind.Stylus else InputKind.Finger).also { lastKind = it }
+    }
     override suspend fun typeText(text: String, submit: Boolean) = "Typed ${text.length} characters"
     override suspend fun pressKey(key: String) = key in setOf("back", "home")
     override fun listApps() = listOf("Samsung Notes" to "com.samsung.android.app.notes", "Chrome" to "com.android.chrome")
@@ -101,6 +107,31 @@ class PhoneToolboxTest {
         // x 50..~250 screenshot px → 100..~500 screen px; y 100..~125 → 200..~250.
         assertTrue(pts.all { it.x in 90f..600f && it.y in 180f..270f })
         assertTrue(host.strokes.all { it.durationMs >= Strokes.MIN_STROKE_MS })
+    }
+
+    @Test
+    fun `writing uses the pen when it's set up and says so`() = runTest {
+        box.call("screenshot", args("{}"))
+        host.stylusReady = true
+        val pen = box.call("write_handwriting", args("""{"text":"Hi","x":10,"y":10}"""))
+        assertEquals(InputKind.Stylus, host.lastKind)
+        assertTrue(pen.content[0]["text"]!!.jsonPrimitive.content.contains("stylus"))
+    }
+
+    @Test
+    fun `without the pen, writing falls back to the finger and explains the way out`() = runTest {
+        box.call("screenshot", args("{}"))
+        val finger = box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]]]}"""))
+        assertEquals(InputKind.Finger, host.lastKind)
+        assertTrue(finger.content[0]["text"]!!.jsonPrimitive.content.contains("Shizuku"))
+    }
+
+    @Test
+    fun `taps stay finger touches even when the pen is set up`() = runTest {
+        box.call("screenshot", args("{}"))
+        host.stylusReady = true
+        box.call("tap", args("""{"x":1,"y":1}"""))
+        assertEquals(InputKind.Finger, host.lastKind)
     }
 
     @Test
