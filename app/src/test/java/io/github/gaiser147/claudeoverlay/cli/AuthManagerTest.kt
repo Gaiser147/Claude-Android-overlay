@@ -20,13 +20,6 @@ class AuthManagerTest {
     }
 
     @Test
-    fun `reads login status past leading warnings`() {
-        assertTrue(AuthManager.parseLoggedIn("Claude configuration file not found\n{\n \"loggedIn\": true\n}"))
-        assertFalse(AuthManager.parseLoggedIn("{\"loggedIn\": false}"))
-        assertFalse(AuthManager.parseLoggedIn("Error: something"))
-    }
-
-    @Test
     fun `cli environment routes traffic through the proxy and uses the bundled bash`() {
         val env = cliEnvironment(File("/h"), File("/t"), File("/lib/arm64/libbash.so"), "http://u:p@127.0.0.1:1")
         assertEquals("/lib/arm64/libbash.so", env["SHELL"])

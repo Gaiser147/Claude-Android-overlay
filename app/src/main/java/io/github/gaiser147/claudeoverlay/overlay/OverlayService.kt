@@ -53,6 +53,9 @@ import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
 import io.github.gaiser147.claudeoverlay.ui.theme.ClaudeOverlayTheme
 import io.github.gaiser147.claudeoverlay.voice.Speaker
 import io.github.gaiser147.claudeoverlay.voice.VoiceInput
+import io.github.gaiser147.claudeoverlay.CrashLog
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -75,6 +78,16 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     private lateinit var annotations: AnnotationLayer
     private lateinit var mcp: McpHttpServer
 
+    /**
+     * The service's coroutines: an exception escaping one would otherwise kill the app (and
+     * with it the CLI, possibly mid token refresh). Logged instead, and the overlay stays up.
+     */
+    private val safeScope by lazy {
+        CoroutineScope(lifecycleScope.coroutineContext + CoroutineExceptionHandler { _, e ->
+            CrashLog.nonFatal(e, "overlay coroutine")
+        })
+    }
+
     /** A MediaProjection is live, so the foreground service must keep its mediaProjection type. */
     private var projectionActive = false
     private var inForeground = false
@@ -96,7 +109,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
         )
         controller = ChatController(
-            AppGraph.get(this), lifecycleScope, captureWindow, VoiceInput(this), Speaker(this),
+            AppGraph.get(this), safeScope, captureWindow, VoiceInput(this), Speaker(this),
             mcpConfig = mcp.cliConfig("phone"),
             onNewTurn = ::clearDrawings,
         )
@@ -125,7 +138,19 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         // microphone is a while-in-use type that can't be added from the background, and a
         // notification tap (ACTION_EXPAND) has nothing to change. Keep the mediaProjection type
         // while a capture is live, or Android ends the projection.
-        if (!inForeground || data != null) startInForeground(data != null || projectionActive)
+        // A null intent is Android restarting us after it killed the process (START_STICKY).
+        val systemRestart = intent == null
+        if (!inForeground || data != null) {
+            try {
+                startInForeground(data != null || projectionActive, withMic = intent != null && intent.action == null)
+            } catch (e: Exception) {
+                // Android may refuse a foreground start from the background; don't crash over it.
+                CrashLog.nonFatal(e, "startForeground")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
+        if (systemRestart) controller.continueAfterRestart()
         if (data != null) {
             val projection = getSystemService(MediaProjectionManager::class.java).getMediaProjection(code, data)
             if (projection != null) {
@@ -141,8 +166,9 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
                 controller.attachProjection(capturer)
             }
         }
-        // The projection consent can't be replayed, so a restart without it would be half-working.
-        return START_NOT_STICKY
+        // If Android kills the app, bring the overlay back. A screen-recording consent can't be
+        // replayed, but with the accessibility service screenshots work without one.
+        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -425,7 +451,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
 
     // ── foreground service ─────────────────────────────────────────────────────────────────
 
-    private fun startInForeground(withProjection: Boolean) {
+    private fun startInForeground(withProjection: Boolean, withMic: Boolean) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW)
@@ -448,7 +474,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         } else 0
         // Dictation from the overlay counts as background mic use without this type.
-        val micType = if (Build.VERSION.SDK_INT >= 30 &&
+        val micType = if (withMic && Build.VERSION.SDK_INT >= 30 &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         ) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
         val specialType = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0

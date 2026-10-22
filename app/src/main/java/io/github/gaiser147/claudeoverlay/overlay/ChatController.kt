@@ -11,6 +11,7 @@ import io.github.gaiser147.claudeoverlay.capture.Shot
 import io.github.gaiser147.claudeoverlay.cli.Attachment
 import io.github.gaiser147.claudeoverlay.cli.ChatEvent
 import io.github.gaiser147.claudeoverlay.cli.ClaudeSession
+import io.github.gaiser147.claudeoverlay.cli.Credentials
 import io.github.gaiser147.claudeoverlay.cli.ModelInfo
 import io.github.gaiser147.claudeoverlay.cli.ShotFingerprint
 import io.github.gaiser147.claudeoverlay.cli.UserMessage
@@ -104,6 +105,11 @@ class ChatController(
     private var chunker = SentenceChunker()
     /** What was typed before dictation started; dictated words are appended to it. */
     private var draftBeforeVoice = ""
+    /** The last message sent, for one automatic retry after a login recovery. */
+    private var lastLine: String? = null
+    /** That retry was already spent for the current failure (no reconnect loops). */
+    private var authRecovered = false
+    private var restarting = false
 
     init {
         scope.launch {
@@ -120,7 +126,12 @@ class ChatController(
                     controlAllowed = graph.settings.controlAllowed(),
                 )
             }
-            if (graph.auth.isLoggedIn()) startSession(null) else _state.update { it.copy(needsLogin = true) }
+            when {
+                !graph.auth.isLoggedIn() -> _state.update { it.copy(needsLogin = true) }
+                // Restarted by Android: continueAfterRestart resumes instead of a fresh start
+                // (two CLIs starting at once could race on the token refresh).
+                !restarting -> startSession(null)
+            }
         }
         scope.launch { session.events.collect(::onEvent) }
         scope.launch { speaker.speaking.collect { on -> _state.update { it.copy(speaking = on) } } }
@@ -274,7 +285,13 @@ class ChatController(
                 notice("Not sent:\n" + built.rejected.joinToString("\n") { "  ${it.name} — ${it.reason}" }, true)
             }
             try {
-                withContext(Dispatchers.IO) { session.send(built.line) }
+                lastLine = built.line
+                withContext(Dispatchers.IO) {
+                    // A CLI started before the stored login changed may hold superseded
+                    // tokens; a fresh process in the same conversation picks up the new ones.
+                    if (session.credentialsChanged()) session.start(_state.value.model, session.sessionId)
+                    session.send(built.line)
+                }
             } catch (e: Exception) {
                 notice("Couldn't start Claude: ${e.message}", true)
                 _state.update { it.copy(busy = false) }
@@ -315,6 +332,18 @@ class ChatController(
         _state.update { it.copy(resumableSession = null) }
         scope.launch {
             if (startSession(id)) notice("Resumed your last conversation.", false)
+        }
+    }
+
+    /** Android killed and restarted the overlay: pick the conversation up where it was. */
+    fun continueAfterRestart() {
+        restarting = true
+        scope.launch {
+            val id = graph.settings.lastSession() ?: return@launch
+            if (startSession(id)) {
+                _state.update { it.copy(resumableSession = null) }
+                notice("Android had closed the overlay; continuing your last conversation.", false)
+            }
         }
     }
 
@@ -368,12 +397,14 @@ class ChatController(
                 if (!interrupted) speak(chunker.flush())
                 if (event.isError && !interrupted) {
                     val text = event.text?.takeIf { it.isNotBlank() } ?: "Claude reported an error (${event.subtype})."
+                    if (Credentials.isAuthError(text) && recoverLogin()) return
                     notice(text, true)
-                    if (looksLikeAuthError(text)) _state.update { it.copy(needsLogin = true) }
+                    if (Credentials.isAuthError(text)) _state.update { it.copy(needsLogin = true) }
                 } else if (interrupted) {
                     notice("Stopped.", false)
                 }
                 interrupted = false
+                if (!event.isError) authRecovered = false
                 _state.update {
                     it.copy(
                         busy = false,
@@ -384,8 +415,13 @@ class ChatController(
             }
             is ChatEvent.ProcessExited -> if (_state.value.busy) {
                 val detail = event.stderrTail.lines().lastOrNull { it.isNotBlank() }?.let { ": $it" } ?: ""
-                notice("Claude stopped unexpectedly (exit ${event.code})$detail. Your next message reconnects to the same conversation.", true)
-                if (looksLikeAuthError(event.stderrTail)) _state.update { it.copy(needsLogin = true) }
+                val why = if (event.code == SIGKILL_EXIT) {
+                    "Android stopped the Claude process (memory or battery saving)"
+                } else "Claude stopped unexpectedly (exit ${event.code})$detail"
+                notice("$why. Your next message reconnects to the same conversation.", true)
+                if (Credentials.isAuthError(event.stderrTail) || graph.auth.credentialsState() == Credentials.State.Dead) {
+                    _state.update { it.copy(needsLogin = true) }
+                }
                 _state.update { it.copy(busy = false) }
             }
         }
@@ -419,7 +455,31 @@ class ChatController(
 
     private fun notice(text: String, isError: Boolean) = add { ChatItem.Notice(it, text, isError) }
 
-    private fun looksLikeAuthError(text: String) =
-        listOf("/login", "not logged in", "authentication", "oauth", "401").any { text.contains(it, ignoreCase = true) }
+    /**
+     * An auth failure from a CLI whose *stored* login is fine means this process lost a token
+     * refresh race and is stuck with a dead copy (the desktop overlay's "auth recycle"). A
+     * fresh process in the same conversation fixes that; resend the message once. Returns
+     * false when there's nothing to recover (the stored login itself is gone).
+     */
+    private fun recoverLogin(): Boolean {
+        val line = lastLine
+        if (authRecovered || line == null || graph.auth.credentialsState() == Credentials.State.Dead) return false
+        authRecovered = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                session.start(_state.value.model, session.sessionId)
+                session.send(line)
+            } catch (e: Exception) {
+                notice("Couldn't restart Claude: ${e.message}", true)
+                _state.update { it.copy(busy = false) }
+            }
+        }
+        return true
+    }
+
+    private companion object {
+        /** 128 + SIGKILL: the system's low-memory or child-process killer. */
+        const val SIGKILL_EXIT = 137
+    }
 
 }

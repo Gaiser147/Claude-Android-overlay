@@ -41,7 +41,15 @@ class LocalProxy(
         thread(name = "local-proxy", isDaemon = true) {
             while (running) {
                 val client = try { server.accept() } catch (e: IOException) { break }
-                thread(name = "local-proxy-conn", isDaemon = true) { handle(client) }
+                thread(name = "local-proxy-conn", isDaemon = true) {
+                    // A reset or dropped connection is routine (the CLI restarts, the network
+                    // changes); escaping this thread would kill the whole app.
+                    try {
+                        handle(client)
+                    } catch (e: Exception) {
+                        runCatching { client.close() }
+                    }
+                }
             }
         }
     }

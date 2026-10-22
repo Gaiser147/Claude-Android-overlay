@@ -61,7 +61,15 @@ class McpHttpServer(private val toolbox: Toolbox) {
         thread(name = "mcp-server", isDaemon = true) {
             while (running) {
                 val client = try { server.accept() } catch (e: IOException) { break }
-                thread(name = "mcp-conn", isDaemon = true) { serve(client) }
+                thread(name = "mcp-conn", isDaemon = true) {
+                    // The CLI drops its connection whenever it exits or restarts; an exception
+                    // escaping this thread would kill the whole app.
+                    try {
+                        serve(client)
+                    } catch (e: Exception) {
+                        runCatching { client.close() }
+                    }
+                }
             }
         }
     }

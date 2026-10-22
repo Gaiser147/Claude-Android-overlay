@@ -8,6 +8,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.io.BufferedWriter
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
@@ -40,9 +41,18 @@ class ClaudeSession(
 
     val isAlive: Boolean get() = process?.isAlive == true
 
+    private var startedWithCredentials: Pair<Long, Long>? = null
+
+    /**
+     * The stored login changed since this process started (a new sign-in, or a refresh by
+     * another process): it may hold superseded tokens and should be restarted before use.
+     */
+    fun credentialsChanged(): Boolean =
+        isAlive && Credentials.signature(Credentials.file(env.home)) != startedWithCredentials
+
     /** Starts fresh, or resumes [resume] (a session id from an earlier run). */
     fun start(model: String, resume: String? = null) = synchronized(lock) {
-        stopLocked()
+        stopLocked(waitForExit = true)
         this.model = model
         sessionId = resume
         val args = buildList {
@@ -57,6 +67,7 @@ class ClaudeSession(
             if (mcpConfig != null) addAll(listOf("--mcp-config", mcpConfig))
             if (resume != null) addAll(listOf("--resume", resume))
         }
+        startedWithCredentials = Credentials.signature(Credentials.file(env.home))
         val p = env.processBuilder(args, proxy).start()
         process = p
         stdin = p.outputStream.bufferedWriter()
@@ -111,12 +122,26 @@ class ClaudeSession(
 
     fun stop() = synchronized(lock) { stopLocked() }
 
-    private fun stopLocked() {
+    /**
+     * Ends the process gently: closing stdin makes the CLI finish and exit on its own. Killing
+     * it outright could land in the middle of a token refresh, and the rotated refresh token
+     * would be lost with it (the user would have to sign in again). Only a CLI that doesn't
+     * exit within a grace period is terminated.
+     */
+    private fun stopLocked(waitForExit: Boolean = false) {
         val p = process ?: return
         process = null
         runCatching { stdin?.close() }
         stdin = null
-        p.destroy()
+        val finish = {
+            val exited = runCatching { p.waitFor(STOP_GRACE_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)
+            if (!exited) {
+                p.destroy()
+                runCatching { p.waitFor(STOP_GRACE_MS, TimeUnit.MILLISECONDS) }
+            }
+        }
+        // Before starting a replacement, wait: two CLIs at once may both refresh the token.
+        if (waitForExit) finish() else thread(name = "claude-stop", isDaemon = true) { finish() }
     }
 
     private fun control(request: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
@@ -136,6 +161,7 @@ class ClaudeSession(
 
     companion object {
         const val DEFAULT_MODEL = "opus"
+        private const val STOP_GRACE_MS = 3000L
 
         /** Shown until the CLI has reported its own menu once (then that list is cached). */
         val FALLBACK_MODELS = listOf("opus", "fable", "sonnet", "haiku").map {

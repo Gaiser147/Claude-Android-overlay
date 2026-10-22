@@ -58,4 +58,9 @@
     <string name="clear_drawings">Clear Claude\'s drawings</string>
     <string name="control_on">Claude may operate the phone</string>
     <string name="allow_control">Let Claude operate the phone</string>
+    <string name="crash_title">The overlay stopped unexpectedly last time</string>
+    <string name="crash_share">Share report</string>
+    <string name="crash_dismiss">Dismiss</string>
+    <string name="step_battery">Don\'t let battery saving close the overlay</string>
+    <string name="battery_explain">Lets Claude Overlay keep running in the background. On Samsung also check Settings → Battery → Background usage limits: Claude Overlay must not be in “Sleeping apps” or “Deep sleeping apps”, and set its battery use to “Unrestricted”.</string>
 </resources>

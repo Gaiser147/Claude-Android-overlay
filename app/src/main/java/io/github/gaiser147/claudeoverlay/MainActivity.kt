@@ -1,6 +1,7 @@
 package io.github.gaiser147.claudeoverlay
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -46,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,6 +86,8 @@ private fun SetupScreen() {
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var canNotify by remember { mutableStateOf(notificationsAllowed(context)) }
     var canRecord by remember { mutableStateOf(micAllowed(context)) }
+    var unrestricted by remember { mutableStateOf(batteryUnrestricted(context)) }
+    var crash by remember { mutableStateOf(CrashLog.latest()) }
     var cliVersion by remember { mutableStateOf(graph.installer.installedVersion()) }
     var download by remember { mutableStateOf<Float?>(null) }
     var cliError by remember { mutableStateOf<String?>(null) }
@@ -99,6 +103,8 @@ private fun SetupScreen() {
             canOverlay = Settings.canDrawOverlays(context)
             canNotify = notificationsAllowed(context)
             canRecord = micAllowed(context)
+            unrestricted = batteryUnrestricted(context)
+            crash = CrashLog.latest()
             refresh++
         }
     }
@@ -133,6 +139,23 @@ private fun SetupScreen() {
     ) {
         Text(stringResource(R.string.app_name), color = c.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
         Text(stringResource(R.string.setup_intro), color = c.muted, fontSize = 14.sp)
+
+        crash?.let { report ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.toolBg).padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(stringResource(R.string.crash_title), color = c.err, fontWeight = FontWeight.Medium)
+                Text(report.lines().take(6).joinToString("\n"), color = c.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report)
+                        context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }) { Text(stringResource(R.string.crash_share)) }
+                    TextButton(onClick = { CrashLog.clear(); crash = null }) { Text(stringResource(R.string.crash_dismiss)) }
+                }
+            }
+        }
 
         Step(1, stringResource(R.string.step_overlay), done = canOverlay) {
             Button(onClick = {
@@ -218,7 +241,19 @@ private fun SetupScreen() {
             }) { Text(stringResource(R.string.open_settings)) }
         }
 
-        Step(7, stringResource(R.string.step_start), done = false, keepOpen = true, enabled = canOverlay && cliVersion != null && loggedIn == true) {
+        Step(7, stringResource(R.string.step_battery), done = unrestricted) {
+            Text(stringResource(R.string.battery_explain), color = c.muted, fontSize = 13.sp)
+            Button(onClick = {
+                runCatching {
+                    // Sideloaded, not on Play: a background assistant is exactly what this exemption is for.
+                    @SuppressLint("BatteryLife")
+                    val ask = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${context.packageName}".toUri())
+                    context.startActivity(ask)
+                }
+            }) { Text(stringResource(R.string.grant)) }
+        }
+
+        Step(8, stringResource(R.string.step_start), done = false, keepOpen = true, enabled = canOverlay && cliVersion != null && loggedIn == true) {
             val shotsViaService = accessibility != null && ControlService.canScreenshot
             if (shotsViaService) {
                 Text(stringResource(R.string.screenshots_via_accessibility), color = c.muted, fontSize = 13.sp)
@@ -280,6 +315,9 @@ private fun Step(
 private fun notificationsAllowed(context: android.content.Context) =
     Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+private fun batteryUnrestricted(context: android.content.Context) =
+    context.getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
 
 private fun micAllowed(context: android.content.Context) =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

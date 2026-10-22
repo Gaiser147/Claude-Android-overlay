@@ -96,6 +96,22 @@ erlauben (je nach Version in den Notes-Einstellungen unter „S Pen“ die Optio
 ausschalten bzw. „Mit Finger zeichnen“ einschalten). Alternativ schreibt Claude über das
 Text-Werkzeug (Tastatur-Symbol) mit `type_text`; das Tool weist Claude selbst darauf hin.
 
+## Wenn das Overlay verschwindet oder du dich neu anmelden musst
+
+- **Absturzbericht:** Wurde das Overlay unerwartet beendet, zeigt die App beim nächsten Öffnen
+  oben einen Bericht mit „Bericht teilen“. Den bitte mitschicken, wenn du einen Fehler meldest.
+- **Energiesparen:** Einrichtungsschritt 7 nimmt die App von der Akku-Optimierung aus. Bei Samsung
+  zusätzlich unter Einstellungen → Akku → Hintergrundnutzungslimits prüfen, dass Claude Overlay
+  nicht bei „Schlafende Apps“/„Tief schlafende Apps“ steht.
+- **„Android hat den Claude-Prozess beendet“:** Android 12+ beendet Kind-Prozesse von Apps, wenn
+  zu viele laufen oder sie viel Rechenzeit brauchen. Passiert das oft, hilft in den
+  Entwickleroptionen „Einschränkungen für untergeordnete Prozesse deaktivieren“ (Android 14+).
+  Die nächste Nachricht verbindet sich automatisch wieder mit derselben Unterhaltung.
+- **Login:** Die CLI tauscht ihren Refresh-Token bei jeder Erneuerung aus. Die App startet deshalb
+  nie einen zweiten CLI-Prozess, nur um den Login zu prüfen (sie liest die Datei), beendet die CLI
+  sanft statt hart und startet bei einem Login-Fehler einmal eine frische CLI, bevor sie dich zur
+  Anmeldung schickt.
+
 ## Selbst bauen
 
 ```bash

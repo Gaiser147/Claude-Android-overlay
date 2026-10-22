@@ -4,10 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import java.io.Writer
 import kotlin.concurrent.thread
 
@@ -35,13 +31,15 @@ class AuthManager(private val env: CliEnvironment, private val proxy: LocalProxy
     private var process: Process? = null
     private var stdin: Writer? = null
 
+    /**
+     * Read from the CLI's credential file, never by starting another CLI: a second process
+     * can race the running one on a token refresh and cost the user their login.
+     */
     suspend fun isLoggedIn(): Boolean = withContext(Dispatchers.IO) {
-        if (!env.isInstalled) return@withContext false
-        val p = env.processBuilder(listOf("auth", "status", "--json"), proxy).redirectErrorStream(false).start()
-        val out = p.inputStream.bufferedReader().readText()
-        p.waitFor()
-        parseLoggedIn(out)
+        env.isInstalled && credentialsState() in setOf(Credentials.State.LoggedIn, Credentials.State.Unknown)
     }
+
+    fun credentialsState(): Credentials.State = Credentials.state(Credentials.file(env.home))
 
     fun startLogin() {
         cancel()
@@ -97,13 +95,5 @@ class AuthManager(private val env: CliEnvironment, private val proxy: LocalProxy
         private val urlRegex = Regex("""https://\S+/oauth/authorize\?\S+""")
 
         fun findLoginUrl(output: CharSequence): String? = urlRegex.find(output)?.value
-
-        /** `auth status --json` may print warnings first; the JSON object is what counts. */
-        fun parseLoggedIn(output: String): Boolean {
-            val start = output.indexOf('{')
-            if (start < 0) return false
-            val obj = runCatching { Json.parseToJsonElement(output.substring(start)) }.getOrNull() as? JsonObject
-            return (obj?.get("loggedIn") as? JsonPrimitive)?.booleanOrNull == true
-        }
     }
 }
