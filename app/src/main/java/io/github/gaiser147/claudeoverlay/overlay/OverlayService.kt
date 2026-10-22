@@ -43,7 +43,9 @@ import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
 import io.github.gaiser147.claudeoverlay.access.ControlService
 import io.github.gaiser147.claudeoverlay.capture.Shot
 import io.github.gaiser147.claudeoverlay.tools.Annotation
+import io.github.gaiser147.claudeoverlay.stylus.Stylus
 import io.github.gaiser147.claudeoverlay.tools.HersheyFont
+import io.github.gaiser147.claudeoverlay.tools.InputKind
 import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
 import io.github.gaiser147.claudeoverlay.tools.PhoneHost
 import io.github.gaiser147.claudeoverlay.tools.PhoneToolbox
@@ -346,13 +348,19 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             else -> null
         }
 
-        override suspend fun gesture(strokes: List<Stroke>): Boolean {
-            val service = ControlService.instance.value ?: return false
+        override suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean): InputKind? {
+            val service = ControlService.instance.value ?: return null
+            Stylus.refresh()
+            val pen = preferStylus && Stylus.state.value == Stylus.State.Ready
             // Let the user watch Claude work instead of the panel covering the app.
             withContext(Dispatchers.Main) { collapse() }
             stepAside(true)
             return try {
-                service.perform(strokes)
+                when {
+                    pen -> InputKind.Stylus.takeIf { Stylus.draw(strokes) }
+                    service.perform(strokes) -> InputKind.Finger
+                    else -> null
+                }
             } finally {
                 stepAside(false)
             }

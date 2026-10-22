@@ -3,6 +3,7 @@ package io.github.gaiser147.claudeoverlay
 import android.app.Application
 import android.content.Context
 import android.os.Build
+import io.github.gaiser147.claudeoverlay.stylus.Stylus
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -10,11 +11,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Installs [CrashLog] before anything else runs. */
+/** Installs [CrashLog] before anything else runs, then starts listening for Shizuku. */
 class ClaudeOverlayApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashLog.install(this)
+        runCatching { Stylus.init(this) }.onFailure { CrashLog.nonFatal(it, "Shizuku init") }
     }
 }
 

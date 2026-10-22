@@ -35,6 +35,13 @@ Handwriting for Claude's on-screen labels. Caveat, Copyright 2014 The Caveat Pro
 text in `third_party/Caveat-OFL.txt`. The file is a static SemiBold (wght 600) instance cut from
 the variable font with fontTools' instancer; glyphs are unchanged.
 
+## Shizuku API (`dev.rikka.shizuku:api`, `dev.rikka.shizuku:provider` 13.1.5)
+
+Used for the optional real-stylus input. Copyright RikkaApps, licensed under the Apache
+License 2.0 (https://www.apache.org/licenses/LICENSE-2.0); source:
+https://github.com/RikkaApps/Shizuku-API. Only the client libraries are bundled; the Shizuku
+app itself is installed separately by the user.
+
 ## Downloaded at run time, not bundled
 
 The **Claude Code CLI** (`@anthropic-ai/claude-code-linux-arm64-musl` from registry.npmjs.org)

@@ -63,4 +63,11 @@
     <string name="crash_dismiss">Dismiss</string>
     <string name="step_battery">Don\'t let battery saving close the overlay</string>
     <string name="battery_explain">Lets Claude Overlay keep running in the background. On Samsung also check Settings → Battery → Background usage limits: Claude Overlay must not be in “Sleeping apps” or “Deep sleeping apps”, and set its battery use to “Unrestricted”.</string>
+    <string name="step_stylus">Real stylus (for Samsung Notes)</string>
+    <string name="optional">Optional</string>
+    <string name="stylus_ready">Ready – Claude writes with the pen</string>
+    <string name="stylus_explain">Android lets apps draw only as a finger, and Samsung Notes then scrolls instead of drawing. The free app Shizuku (no root) lets Claude Overlay write as a real S Pen, with pressure. Shizuku only needs to be started again after the tablet restarts.</string>
+    <string name="stylus_install">Install Shizuku</string>
+    <string name="stylus_start_hint">Open Shizuku and start it with “Wireless debugging” (follow its pairing steps once), then come back here.</string>
+    <string name="stylus_open">Open Shizuku</string>
 </resources>

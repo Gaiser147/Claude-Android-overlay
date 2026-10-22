@@ -86,15 +86,28 @@ auf den echten Bildschirm um.
 | `draw_annotations` / `clear_annotations` | Pfeil, Kreis/Ellipse, Box, Unterstreichung (auch wellig), Durchstreichen, Textmarker, ✓/✗, Punkt, Handschrift-Text, Pfad, SVG-Pfad | nein |
 | `list_apps`, `open_app` | Apps auflisten/öffnen | ja |
 | `tap`, `long_press`, `swipe` | Touch-Gesten | ja |
-| `draw_strokes`, `write_handwriting` | mit dem Finger zeichnen / von Hand schreiben (Hershey-Einstrich-Schrift, Druck- oder Schreibschrift) | ja |
+| `draw_strokes`, `write_handwriting` | zeichnen / von Hand schreiben (Hershey-Einstrich-Schrift, Druck- oder Schreibschrift) – mit echtem Stift über Shizuku, sonst mit dem Finger | ja |
 | `type_text`, `press_key` | Text ins fokussierte Feld, Zurück/Home/Übersicht | ja |
 
-**Samsung Notes / S Pen:** Android erlaubt Apps nur, Eingaben als *Finger* einzuspielen, nie als
-Stift. Auf Geräten mit S Pen verschiebt der Finger in Samsung Notes standardmäßig das Blatt, statt
-zu zeichnen – dann wackelt die Seite nur. Abhilfe: in Samsung Notes das Zeichnen mit dem Finger
-erlauben (je nach Version in den Notes-Einstellungen unter „S Pen“ die Option „Nur S Pen“
-ausschalten bzw. „Mit Finger zeichnen“ einschalten). Alternativ schreibt Claude über das
-Text-Werkzeug (Tastatur-Symbol) mit `type_text`; das Tool weist Claude selbst darauf hin.
+**Samsung Notes / S Pen:** Android erlaubt normalen Apps (auch über die Bedienungshilfe) nur
+Eingaben als *Finger*. Auf Geräten mit S Pen verschiebt der Finger in Samsung Notes das Blatt,
+statt zu zeichnen – dann wackelt die Seite nur. Deshalb gibt es den optionalen
+Einrichtungsschritt **„Echter Stift (für Samsung Notes)“** über [Shizuku](https://shizuku.rikka.app/)
+(kostenlos, ohne Root):
+
+1. Shizuku aus dem Play Store installieren.
+2. In Shizuku „Über Drahtloses Debugging starten“ wählen und einmalig den Kopplungsschritten folgen.
+3. Zurück in Claude Overlay „Erlauben“ tippen und die Shizuku-Anfrage bestätigen.
+
+Danach schreiben `draw_strokes` und `write_handwriting` als echter Stift mit Druckverlauf
+(aufsetzen – anschwellen – abheben); Tippen und Wischen bleiben Finger-Gesten. Nach einem Neustart
+des Geräts muss Shizuku einmal neu gestartet werden; bis dahin zeichnet Claude wieder mit dem
+Finger. Der Teil, der in Shizukus Prozess läuft (`stylus/StylusService.kt`), kann nur eines:
+übergebene Stift-Striche einspielen.
+
+Ohne Shizuku: in Samsung Notes das Zeichnen mit dem Finger erlauben (je nach Version unter
+„S Pen“ die Option „Nur S Pen“ ausschalten) oder Claude über das Text-Werkzeug (Tastatur-Symbol)
+mit `type_text` schreiben lassen; das Tool weist Claude selbst darauf hin.
 
 ## Wenn das Overlay verschwindet oder du dich neu anmelden musst
 
@@ -132,7 +145,9 @@ erzeugen mit `scripts/fetch-native-deps.sh` (lädt gepinnte Alpine-Pakete, prüf
 - Das Grep-/Glob-Tool der CLI ist deaktiviert (es bräuchte die eingebaute ripgrep über
   `process.execPath`); Claude nutzt stattdessen `grep`/`find` in Bash.
 - Claudes Dateien liegen in einem privaten Ordner der App; andere Apps sieht es per Screenshot
-  und bedient sie (falls erlaubt) über Gesten wie ein Mensch, ohne Druckstufen des S Pen.
+  und bedient sie (falls erlaubt) über Gesten wie ein Mensch; Druckstufen gibt es nur mit
+  Shizuku. Die Stift-Eingabe über Shizuku nutzt eine interne Android-Schnittstelle (wie
+  `adb shell input`) und wurde bisher nicht auf echten Geräten getestet.
 - Werkzeuge laufen ohne Rückfrage (`bypassPermissions`, wie beim Original), aber nur innerhalb
   der App-Sandbox.
 - Noch nicht portiert: Quota-Anzeige, `/compact`, Effort-Menü, Nachrichten-Warteschlange,
@@ -143,7 +158,8 @@ erzeugen mit `scripts/fetch-native-deps.sh` (lädt gepinnte Alpine-Pakete, prüf
 Einrichtung → CLI-Download → Login → Kugel erscheint → Frage mit Screenshot (Overlay und
 Tastatur sind nicht im Bild) → Antwort streamt ohne Flackern → Modell-Auswahl zeigt Versionen →
 Mikrofon: sprechen, Antwort wird vorgelesen → „Markiere, wo ich tippen muss“ zeichnet einen Pfeil →
-Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“ → Stopp während einer Antwort →
+Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“ (ohne und mit Shizuku:
+mit Shizuku erscheint Tinte mit Druckverlauf, das Blatt verschiebt sich nicht) → Stopp während einer Antwort →
 App neu starten → „Letzte Unterhaltung fortsetzen“.
 
 ## Lizenz
