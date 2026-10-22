@@ -110,6 +110,31 @@ class AnnotationParserTest {
     }
 
     @Test
+    fun `marks fit the bounding box of their target, so centre-vs-corner can't shift them`() {
+        val (c, u, k) = parse(
+            """[{"type":"circle","around":[100,200,200,240],"thickness":2},
+                {"type":"underline","around":[100,200,200,240]},
+                {"type":"check","at":[50,60],"size":10}]"""
+        )
+        c as Annotation.Ellipse
+        assertEquals(Pt(300f, 440f), c.center)
+        assertEquals(100f, c.rx, 0.01f)
+        assertEquals(40f, c.ry, 0.01f)
+        assertEquals(2f, c.thickness, 0.01f)
+        u as Annotation.Underline
+        assertEquals(200f, u.from.x, 0.01f)
+        assertTrue("just below the words", u.from.y > 480f)
+        assertEquals(Pt(100f, 120f), (k as Annotation.Check).center)
+    }
+
+    @Test
+    fun `circles still take a centre and radius`() {
+        val c = parse("""[{"type":"circle","center":[100,100],"radius":10}]""").single() as Annotation.Ellipse
+        assertEquals(Pt(200f, 200f), c.center)
+        assertEquals(20f, c.rx, 0.01f)
+    }
+
+    @Test
     fun `svg paths are offset, scaled and mapped`() {
         val s = parse("""[{"type":"svg","d":"M0 0 L10 0","x":5,"y":5,"scale":2}]""").single() as Annotation.Sketch
         assertEquals(listOf(Pt(10f, 10f), Pt(50f, 10f)), s.contours.single())

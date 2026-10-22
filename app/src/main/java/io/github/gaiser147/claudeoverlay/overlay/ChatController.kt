@@ -213,7 +213,7 @@ class ChatController(
     fun setDrawingsShown(shown: Boolean) = _state.update { it.copy(drawingsShown = shown) }
 
     /** A screenshot for the phone tools: always taken, whatever the screenshot toggle says. */
-    suspend fun captureForTools(): Shot? = takeShot()
+    suspend fun captureForTools(withDrawings: Boolean = false): Shot? = takeShot(withDrawings)
 
     /** Mic button: start dictating, or finish (which sends what was said). */
     fun toggleVoice() {
@@ -362,9 +362,9 @@ class ChatController(
         projection = null
     }
 
-    private suspend fun takeShot(): Shot? {
+    private suspend fun takeShot(withDrawings: Boolean = false): Shot? {
         val source = screenshotSource() ?: return null
-        return runCatching { captureSequence.run(source) }.getOrNull()
+        return runCatching { captureSequence.run(source, keepDrawings = withDrawings) }.getOrNull()
     }
 
     private fun onEvent(event: ChatEvent) {

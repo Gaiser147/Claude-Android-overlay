@@ -13,12 +13,16 @@ import java.util.Base64
 
 /** What the tools need from the phone; implemented by the overlay service. */
 interface PhoneHost {
-    /** A fresh screenshot with the overlay hidden; also becomes the coordinate reference. */
-    suspend fun screenshot(): Shot?
+    /**
+     * A fresh screenshot with the overlay hidden; also becomes the coordinate reference.
+     * [withDrawings] keeps Claude's drawings in it, so it can check where they landed.
+     */
+    suspend fun screenshot(withDrawings: Boolean = false): Shot?
     /** Screen size in pixels, to map screenshot coordinates. */
     fun screenSize(): Pair<Int, Int>
 
-    suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean)
+    /** Shows the drawings; returns how long they take to finish appearing (ms). */
+    suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long
     suspend fun clearAnnotations()
 
     /** Null when Claude may operate the phone, else why not (in words for the model). */
@@ -93,8 +97,8 @@ class PhoneToolbox(
     private suspend fun geometry(): ShotGeometry =
         geometry ?: run { screenshotResult("Screenshot"); geometry } ?: throw BadArgs("No screenshot available")
 
-    private suspend fun screenshotResult(caption: String): ToolResult {
-        val shot = host.screenshot() ?: return ToolResult.text("Couldn't take a screenshot.", true)
+    private suspend fun screenshotResult(caption: String, withDrawings: Boolean = false): ToolResult {
+        val shot = host.screenshot(withDrawings) ?: return ToolResult.text("Couldn't take a screenshot.", true)
         val (sw, sh) = host.screenSize()
         geometry = ShotGeometry(shot.width, shot.height, sw, sh)
         return ToolResult(
@@ -108,8 +112,16 @@ class PhoneToolbox(
     private suspend fun draw(args: JsonObject): ToolResult {
         val shapes = args["shapes"] as? JsonArray ?: throw BadArgs("'shapes' must be an array")
         val annotations = AnnotationParser.parse(shapes, geometry())
-        host.showAnnotations(annotations, args.bool("clear_previous") ?: true)
-        return ToolResult.text("Drew ${annotations.size} shape(s) on the user's screen.")
+        val animationMs = host.showAnnotations(annotations, args.bool("clear_previous") ?: true)
+        // Let the marks finish appearing, then show Claude the screen *with* them: every other
+        // screenshot hides the drawings, so this is its only way to see where they landed.
+        sleep(animationMs + SETTLE_AFTER_DRAW_MS)
+        return screenshotResult(
+            "Drew ${annotations.size} mark(s). This screenshot shows them on the user's screen — check that each " +
+                "sits on its target; if one is off (e.g. the page scrolled), redraw with corrected coordinates " +
+                "and clear_previous true. Screen",
+            withDrawings = true,
+        )
     }
 
     private inline fun control(block: () -> ToolResult): ToolResult =
@@ -184,6 +196,7 @@ class PhoneToolbox(
         const val MAX_STROKES = 200
         const val MAX_HANDWRITING_STROKES = 600
         const val DEFAULT_LETTER_HEIGHT = 28f
+        const val SETTLE_AFTER_DRAW_MS = 250L
 
         /**
          * Android lets apps inject touches only as a finger, never as a stylus, and note apps
@@ -211,25 +224,30 @@ class PhoneToolbox(
             ),
             tool(
                 "draw_annotations",
-                "Annotate the user's screen like a tutor with a pen: the marks are rendered as natural handwriting " +
-                    "(tapered marker strokes, curved arrows, hand-drawn circles, handwritten labels) on a layer that " +
-                    "never blocks touches and stays until replaced or cleared. Prefer few, purposeful marks: circle or " +
-                    "underline the thing you mean, an arrow plus a 1–4 word label, a check or cross when correcting, a " +
-                    "highlight behind a phrase. Don't cover the text you're pointing at; put labels in empty space. " +
-                    "For diagrams, use 'svg' with path data (smooth curves) instead of many boxes, and 'dot' for nodes. " +
-                    "Coordinates are pixels in the latest screenshot.",
+                "Annotate the user's screen like a tutor with a pen: marks are rendered as natural handwriting " +
+                    "(tapered strokes, curved arrows, hand-drawn circles, handwritten labels) on a layer that never " +
+                    "blocks touches and stays until replaced or cleared. Use few, purposeful marks: circle or " +
+                    "underline the thing you mean, an arrow plus a 1–4 word label, a check or cross when correcting, " +
+                    "a highlight behind a phrase. Put labels in empty space, not over the content. For diagrams use " +
+                    "'svg' path data and 'dot' for nodes. All coordinates are pixels of the latest screenshot; to mark " +
+                    "something, give its bounding box as 'around' = [left, top, right, bottom] — the tool fits the " +
+                    "circle, box, highlight or underline to it. The result is a screenshot WITH your marks: check them.",
                 """{"type":"object","required":["shapes"],"properties":{
                   "clear_previous":{"type":"boolean","description":"remove earlier drawings first (default true)"},
                   "shapes":{"type":"array","items":{"type":"object","required":["type"],"properties":{
-                    "type":{"type":"string","enum":["arrow","circle","ellipse","box","underline","strike","highlight","check","cross","dot","text","path","svg"],
-                      "description":"arrow: from,to[,bend -1..1]; circle: x,y,radius or x,y,width,height (box to encircle); box/highlight/strike: x,y,width,height; underline: x,y(baseline),width[,wavy]; check/cross/dot: x,y[,size]; text: x,y(top-left),text[,size]; path: points; svg: d[,x,y,scale]"},
-                    "from":$POINT,"to":$POINT,"bend":{"type":"number"},
-                    "x":$XY,"y":$XY,"width":$XY,"height":$XY,"radius":$XY,"size":$XY,
-                    "wavy":{"type":"boolean"},
+                    "type":{"type":"string","enum":["circle","box","underline","highlight","strike","arrow","check","cross","dot","text","path","svg"],
+                      "description":"circle/box/underline/highlight/strike: around; arrow: from, to [, bend -1..1]; check/cross/dot: at [, size]; text: at (top-left of the text), text [, size, font]; circle may also use center + radius; path: points; svg: d [, x, y, scale]"},
+                    "around":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4,"description":"[left, top, right, bottom] of the thing to mark, in screenshot pixels"},
+                    "center":$POINT,"radius":$XY,"at":$POINT,"from":$POINT,"to":$POINT,
+                    "bend":{"type":"number","description":"arrow curvature, -1..1 (0 = straight)"},
+                    "size":{"type":"number","description":"check/cross/dot size or text letter height, screenshot pixels"},
+                    "wavy":{"type":"boolean","description":"wavy underline"},
                     "text":{"type":"string"},
+                    "font":{"type":"string","enum":["handwriting","print"],"description":"text style (default handwriting)"},
+                    "thickness":{"type":"number","description":"pen width: 0.5 fine … 1 normal … 2 marker … 3 bold"},
                     "points":{"type":"array","items":$POINT},
                     "d":{"type":"string","description":"SVG path data in screenshot pixels (M L H V C S Q T A Z)"},
-                    "scale":{"type":"number"},
+                    "x":{"type":"number"},"y":{"type":"number"},"scale":{"type":"number"},
                     "label":{"type":"string","description":"short handwritten caption placed next to the mark"},
                     "color":$COLOR}}}}}""",
             ),

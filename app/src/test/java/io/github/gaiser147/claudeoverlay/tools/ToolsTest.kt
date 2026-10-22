@@ -23,9 +23,14 @@ class FakeHost(var blocked: String? = null) : PhoneHost {
     val gestures = mutableListOf<List<Stroke>>()
     val strokes: List<Stroke> get() = gestures.flatten()
     var annotations: List<Annotation> = emptyList()
-    override suspend fun screenshot() = Shot(Attachment("s.jpg", "image/jpeg", byteArrayOf(1, 2)), null, 500, 1000).also { log += "shot" }
+    override suspend fun screenshot(withDrawings: Boolean) =
+        Shot(Attachment("s.jpg", "image/jpeg", byteArrayOf(1, 2)), null, 500, 1000).also { log += if (withDrawings) "shot+drawings" else "shot" }
     override fun screenSize() = 1000 to 2000
-    override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean) { this.annotations = annotations }
+    override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long {
+        this.annotations = annotations
+        log += "draw"
+        return 400
+    }
     override suspend fun clearAnnotations() { annotations = emptyList() }
     override fun controlBlockedReason() = blocked
     override suspend fun gesture(strokes: List<Stroke>): Boolean { gestures += strokes; return true }
@@ -53,7 +58,9 @@ class PhoneToolboxTest {
     fun `drawing maps screenshot pixels to the screen, taking a screenshot first if needed`() = runTest {
         val r = box.call("draw_annotations", args("""{"shapes":[{"type":"box","x":100,"y":200,"width":50,"height":25,"label":"hier"}]}"""))
         assertFalse(r.isError)
-        assertEquals(listOf("shot"), host.log)
+        // Reference screenshot first, then a check screenshot with the drawings visible.
+        assertEquals(listOf("shot", "draw", "shot+drawings"), host.log)
+        assertEquals("image", r.content.last()["type"]!!.jsonPrimitive.content)
         val b = host.annotations.single() as Annotation.Box
         assertEquals(Pt(200f, 400f), b.topLeft)
         assertEquals(Pt(300f, 450f), b.bottomRight)

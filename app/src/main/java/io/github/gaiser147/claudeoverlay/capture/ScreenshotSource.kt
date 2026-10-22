@@ -26,8 +26,11 @@ interface ScreenshotSource {
 interface CaptureWindow {
     /** Closes the overlay's own keyboard and returns once it's off the screen (or gave up). */
     suspend fun dismissKeyboard()
-    /** Hides (or restores) every overlay window: chat panel/orb and Claude's drawings. */
-    suspend fun setHidden(hidden: Boolean)
+    /**
+     * Hides (or restores) the overlay's windows: the chat panel/orb and, unless
+     * [keepDrawings], Claude's drawings.
+     */
+    suspend fun setHidden(hidden: Boolean, keepDrawings: Boolean = false)
 }
 
 /**
@@ -39,13 +42,14 @@ class CaptureSequence(
     private val window: CaptureWindow,
     private val clock: () -> Long = System::nanoTime,
 ) {
-    suspend fun run(source: ScreenshotSource): Shot? {
+    /** @param keepDrawings leave Claude's drawings in the picture, so it can check them. */
+    suspend fun run(source: ScreenshotSource, keepDrawings: Boolean = false): Shot? {
         window.dismissKeyboard()
-        window.setHidden(true)
+        window.setHidden(true, keepDrawings)
         try {
             return source.capture(clock())
         } finally {
-            window.setHidden(false)
+            window.setHidden(false, keepDrawings)
         }
     }
 }

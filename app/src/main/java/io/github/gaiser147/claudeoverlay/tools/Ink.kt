@@ -17,7 +17,7 @@ class InkStroke(val points: List<Pt>, val widths: List<Float>, val color: Int, v
 }
 
 /** Handwritten text: [at] is its top-left, [size] the font size in px. */
-class InkText(val at: Pt, val text: String, val color: Int, val size: Float, val rotationDeg: Float)
+class InkText(val at: Pt, val text: String, val color: Int, val size: Float, val rotationDeg: Float, val print: Boolean = false)
 
 /** Everything one annotation turns into, drawn in order: strokes, then its text. */
 class InkMark(val strokes: List<InkStroke>, val texts: List<InkText>) {
@@ -34,11 +34,12 @@ class InkMark(val strokes: List<InkStroke>, val texts: List<InkText>) {
  * Sizes scale with [unit], the screen's px per dp.
  */
 class Ink(private val unit: Float) {
-    private val pen = 3.4f * unit
+    private val basePen = 3.4f * unit
     private val step = 3f * unit
 
     fun render(a: Annotation): InkMark {
         val rnd = Random(a.hashCode().toLong())
+        val pen = basePen * a.thickness
         val color = a.color ?: if (a is Annotation.Highlight) HIGHLIGHTER else PEN
         val strokes = mutableListOf<InkStroke>()
         val texts = mutableListOf<InkText>()
@@ -106,7 +107,7 @@ class Ink(private val unit: Float) {
                 a.label?.let { texts += labelNear(it, Pt(c.x + s, c.y - s), awayFrom = c, color = color, rnd = rnd) }
             }
             is Annotation.Dot -> {
-                val r = 3.2f * unit
+                val r = 3.2f * unit * a.thickness
                 val pts = (0..10).map { k ->
                     val t = 2 * PI.toFloat() * k / 8
                     Pt(a.at.x + r * 0.5f * cos(t), a.at.y + r * 0.5f * sin(t))
@@ -114,7 +115,11 @@ class Ink(private val unit: Float) {
                 strokes += InkStroke(pts, pts.map { r * 1.3f }, color, INK_ALPHA)
                 a.label?.let { texts += labelNear(it, a.at, awayFrom = Pt(a.at.x - 1, a.at.y + 1), color = color, rnd = rnd) }
             }
-            is Annotation.Label -> texts += InkText(a.at, a.text, color, a.size?.let { it * 1.3f } ?: TEXT_SIZE * unit, tilt(rnd))
+            is Annotation.Label -> texts += if (a.print) {
+                InkText(a.at, a.text, color, a.size?.let { it * 1.3f } ?: PRINT_SIZE * unit, 0f, print = true)
+            } else {
+                InkText(a.at, a.text, color, a.size?.let { it * 1.3f } ?: TEXT_SIZE * unit, tilt(rnd))
+            }
             is Annotation.Path -> {
                 stroke(smooth(a.points, rnd))
                 a.label?.let { texts += labelNear(it, a.points.last(), awayFrom = a.points.first(), color = color, rnd = rnd) }
@@ -301,5 +306,6 @@ class Ink(private val unit: Float) {
         const val HIGHLIGHT_ALPHA = 0.38f
         /** Handwritten label size, dp. */
         const val TEXT_SIZE = 22f
+        const val PRINT_SIZE = 16f
     }
 }

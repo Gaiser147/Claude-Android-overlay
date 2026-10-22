@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -86,10 +87,13 @@ class AnnotationLayer(
 
     val isShowing: Boolean get() = annotations.isNotEmpty()
 
-    fun show(list: List<Annotation>, clearPrevious: Boolean) {
+    /** Shows [list]; returns how long the draw-on animation takes (ms). */
+    fun show(list: List<Annotation>, clearPrevious: Boolean): Long {
         annotations = if (clearPrevious) list else annotations + list
         generation++
         if (view == null) attach()
+        val ink = Ink(context.resources.displayMetrics.density)
+        return DrawSchedule(annotations.map { ink.render(it).effort }, context.resources.displayMetrics.density).totalMs.toLong()
     }
 
     fun clear() {
@@ -300,17 +304,23 @@ private fun Path.cap(c: Pt, from: Offset, to: Offset) {
 
 /** Handwritten words, revealed left to right as if being written, with a faint halo. */
 private fun DrawScope.drawHandwriting(t: InkText, fraction: Float, measurer: TextMeasurer) {
-    val base = TextStyle(fontFamily = Handwriting, fontSize = (t.size / density / fontScale).sp, fontWeight = FontWeight.SemiBold)
-    val ink = measurer.measure(t.text, base.copy(color = Color(t.color)))
-    val halo = measurer.measure(
-        t.text, base.copy(color = Color.White.copy(alpha = 0.8f), drawStyle = Stroke(width = 3.5f * density, join = StrokeJoin.Round)),
+    val style = TextStyle(
+        fontFamily = if (t.print) FontFamily.Default else Handwriting,
+        fontSize = (t.size / density / fontScale).sp,
+        fontWeight = if (t.print) FontWeight.Medium else FontWeight.SemiBold,
     )
-    val x = t.at.x.coerceIn(0f, (size.width - ink.size.width).coerceAtLeast(0f))
-    val y = t.at.y.coerceIn(0f, (size.height - ink.size.height).coerceAtLeast(0f))
-    rotate(t.rotationDeg, pivot = Offset(x, y + ink.size.height / 2f)) {
-        clipRect(x - 8 * density, y - 8 * density, x + ink.size.width * fraction + 4 * density, y + ink.size.height + 8 * density) {
-            drawText(halo, topLeft = Offset(x, y))
-            drawText(ink, topLeft = Offset(x, y), alpha = Ink.INK_ALPHA)
+    val layout = measurer.measure(t.text, style)
+    val x = t.at.x.coerceIn(0f, (size.width - layout.size.width).coerceAtLeast(0f))
+    val y = t.at.y.coerceIn(0f, (size.height - layout.size.height).coerceAtLeast(0f))
+    rotate(t.rotationDeg, pivot = Offset(x, y + layout.size.height / 2f)) {
+        clipRect(x - 8 * density, y - 8 * density, x + layout.size.width * fraction + 4 * density, y + layout.size.height + 8 * density) {
+            // Colour and style passed explicitly: the halo is a thin white outline behind the
+            // ink, never an ink-coloured stroke that would make the letters look bloated.
+            drawText(
+                layout, color = Color.White.copy(alpha = 0.75f), topLeft = Offset(x, y),
+                drawStyle = Stroke(width = 2.5f * density, join = StrokeJoin.Round),
+            )
+            drawText(layout, color = Color(t.color).copy(alpha = Ink.INK_ALPHA), topLeft = Offset(x, y), drawStyle = Fill)
         }
     }
 }

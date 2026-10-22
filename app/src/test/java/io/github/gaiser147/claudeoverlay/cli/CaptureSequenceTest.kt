@@ -13,7 +13,9 @@ class CaptureSequenceTest {
 
     private val window = object : CaptureWindow {
         override suspend fun dismissKeyboard() { log += "keyboard away" }
-        override suspend fun setHidden(hidden: Boolean) { log += if (hidden) "hide" else "show" }
+        override suspend fun setHidden(hidden: Boolean, keepDrawings: Boolean) {
+            log += (if (hidden) "hide" else "show") + if (keepDrawings) " (keep drawings)" else ""
+        }
     }
 
     @Test
@@ -27,6 +29,15 @@ class CaptureSequenceTest {
         val shot = CaptureSequence(window, clock = { 42L }).run(source)
         assertEquals(listOf("keyboard away", "hide", "capture after 42", "show"), log)
         assertEquals(10 to 20, shot!!.width to shot.height)
+    }
+
+    @Test
+    fun `a check shot can leave Claude's drawings in the picture`() = runTest {
+        val source = object : ScreenshotSource {
+            override suspend fun capture(notBeforeNanos: Long): Shot? = null
+        }
+        CaptureSequence(window).run(source, keepDrawings = true)
+        assertEquals(listOf("keyboard away", "hide (keep drawings)", "show (keep drawings)"), log)
     }
 
     @Test

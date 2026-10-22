@@ -293,13 +293,13 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             delay((IME_EXIT_ANIMATION_MS - waited).coerceAtLeast(FRAME_MS * 2))
         }
 
-        override suspend fun setHidden(hidden: Boolean) = withContext(Dispatchers.Main) {
+        override suspend fun setHidden(hidden: Boolean, keepDrawings: Boolean) = withContext(Dispatchers.Main) {
             // Window alpha, not just view visibility: an invisible view still leaves a window
             // the compositor (and Android's touch-occlusion check) accounts for.
             root.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
             params.alpha = if (hidden) 0f else 1f
             update()
-            annotations.setHidden(hidden)
+            if (!keepDrawings) annotations.setHidden(hidden)
         }
     }
 
@@ -324,14 +324,14 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     }
 
     private val phoneHost = object : PhoneHost {
-        override suspend fun screenshot(): Shot? = controller.captureForTools()
+        override suspend fun screenshot(withDrawings: Boolean): Shot? = controller.captureForTools(withDrawings)
 
         override fun screenSize(): Pair<Int, Int> = physicalScreenSize(this@OverlayService)
 
-        override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean) =
+        override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long =
             withContext(Dispatchers.Main) {
-                this@OverlayService.annotations.show(annotations, clearPrevious)
                 controller.setDrawingsShown(true)
+                this@OverlayService.annotations.show(annotations, clearPrevious)
             }
 
         override suspend fun clearAnnotations() = withContext(Dispatchers.Main) { clearDrawings() }
