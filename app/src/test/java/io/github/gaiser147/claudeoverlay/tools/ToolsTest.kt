@@ -18,14 +18,43 @@ import java.io.File
 
 private fun font(name: String) = HersheyFont(File("src/main/assets/hershey/$name.txt").readLines())
 
+/** A small app screen: a search field, a button, a tappable row of plain texts. */
+fun sampleScreen(vararg extra: UiNode) = ScreenSnapshot(
+    app = "Moodle",
+    screen = Box(0, 0, 1000, 2000),
+    roots = listOf(
+        UiNode(
+            bounds = Box(0, 0, 1000, 2000),
+            children = listOf(
+                UiNode(role = "EditText", editable = true, hint = "Kurse durchsuchen", bounds = Box(0, 100, 800, 200)),
+                UiNode(role = "Button", text = "Suchen", clickable = true, bounds = Box(800, 100, 1000, 200)),
+                UiNode(
+                    clickable = true, bounds = Box(0, 300, 1000, 400),
+                    children = listOf(
+                        UiNode(text = "Analysis I", bounds = Box(20, 310, 600, 350)),
+                        UiNode(text = "Abgabe Freitag", bounds = Box(20, 350, 600, 390)),
+                    ),
+                ),
+            ) + extra,
+        ),
+    ),
+)
+
 class FakeHost(var blocked: String? = null) : PhoneHost {
     val log = mutableListOf<String>()
+    /** Screens readScreen returns in turn; the last one stays. */
+    val screens = mutableListOf(sampleScreen())
+    var reads = 0
     val gestures = mutableListOf<List<Stroke>>()
     val strokes: List<Stroke> get() = gestures.flatten()
     var annotations: List<Annotation> = emptyList()
-    override suspend fun screenshot(withDrawings: Boolean) =
+    override suspend fun screenshot(withDrawings: Boolean, maxEdge: Int) =
         Shot(Attachment("s.jpg", "image/jpeg", byteArrayOf(1, 2)), null, 500, 1000).also { log += if (withDrawings) "shot+drawings" else "shot" }
     override fun screenSize() = 1000 to 2000
+    override suspend fun readScreen(): ScreenSnapshot {
+        reads++
+        return if (screens.size > 1) screens.removeAt(0) else screens.single()
+    }
     override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long {
         this.annotations = annotations
         log += "draw"
@@ -33,14 +62,15 @@ class FakeHost(var blocked: String? = null) : PhoneHost {
     }
     override suspend fun clearAnnotations() { annotations = emptyList() }
     override fun controlBlockedReason() = blocked
-    /** Whether real pen input is "set up" on this fake phone. */
-    var stylusReady = false
+    /** Real pen input on this fake phone. */
+    var pen = PenState.NotSetUp
     var lastKind: InputKind? = null
     override suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean): InputKind {
         gestures += strokes
-        return (if (preferStylus && stylusReady) InputKind.Stylus else InputKind.Finger).also { lastKind = it }
+        return (if (preferStylus && pen == PenState.Ready) InputKind.Stylus else InputKind.Finger).also { lastKind = it }
     }
-    override suspend fun typeText(text: String, submit: Boolean) = "Typed ${text.length} characters"
+    override fun penState() = pen
+    override suspend fun typeText(text: String, submit: Boolean) = "Typed ${text.length} characters".also { log += "type $text" }
     override suspend fun pressKey(key: String) = key in setOf("back", "home")
     override fun listApps() = listOf("Samsung Notes" to "com.samsung.android.app.notes", "Chrome" to "com.android.chrome")
     override suspend fun openApp(query: String) = listApps().firstOrNull { it.first.contains(query, true) }?.first
@@ -89,12 +119,62 @@ class PhoneToolboxTest {
     }
 
     @Test
-    fun `tap lands on the mapped point and answers with a screenshot`() = runTest {
+    fun `tap lands on the mapped point and answers with the screen as text, no picture`() = runTest {
         box.call("screenshot", args("{}"))
         val r = box.call("tap", args("""{"x":250,"y":500}"""))
         assertFalse(r.isError)
         assertEquals(Pt(500f, 1000f), host.strokes.single().points.single())
-        assertEquals("image", r.content.last()["type"]!!.jsonPrimitive.content)
+        assertEquals(1, r.content.size)
+        val text = r.content[0]["text"]!!.jsonPrimitive.content
+        assertTrue(text, text.startsWith("Tapped. Screen now:\nApp: Moodle"))
+        assertTrue(text, text.contains("""button "Suchen" @450,75"""))
+    }
+
+    @Test
+    fun `elements are tapped by number, in the screen text's own coordinate space`() = runTest {
+        val read = box.call("read_screen", args("{}")).content[0]["text"]!!.jsonPrimitive.content
+        // No screenshot yet: the space of a tool screenshot of the 1000×2000 screen.
+        assertTrue(read, read.contains("546×1092"))
+        assertTrue(read, read.contains("""[3] button "Analysis I · Abgabe Freitag""""))
+        box.call("tap", args("""{"element":3}"""))
+        assertEquals(Pt(500f, 350f), host.strokes.single().points.single())
+        assertTrue(box.call("tap", args("""{"element":9}""")).isError)
+    }
+
+    @Test
+    fun `type_text with an element taps the field, types and submits in one call`() = runTest {
+        box.call("read_screen", args("{}"))
+        val r = box.call("type_text", args("""{"element":1,"text":"Analysis","submit":true}"""))
+        assertFalse(r.isError)
+        assertEquals(Pt(400f, 150f), host.strokes.single().points.single())
+        assertTrue(host.log.contains("type Analysis"))
+    }
+
+    @Test
+    fun `a screen with little text, or asking for it, adds a screenshot`() = runTest {
+        host.screens[0] = ScreenSnapshot("Paint", listOf(UiNode(bounds = Box(0, 0, 1000, 2000))), Box(0, 0, 1000, 2000))
+        val sparse = box.call("read_screen", args("{}"))
+        assertEquals("image", sparse.content.last()["type"]!!.jsonPrimitive.content)
+        host.screens[0] = sampleScreen()
+        val asked = box.call("read_screen", args("""{"screenshot":true}"""))
+        assertEquals("image", asked.content.last()["type"]!!.jsonPrimitive.content)
+        // The text was renumbered into the screenshot's 500×1000 space.
+        assertTrue(asked.content[0]["text"]!!.jsonPrimitive.content.contains("500×1000"))
+    }
+
+    @Test
+    fun `wait_for keeps reading until the text shows up`() = runTest {
+        host.screens.clear()
+        host.screens += listOf(sampleScreen(), sampleScreen(), sampleScreen(UiNode(text = "Ergebnisse", bounds = Box(0, 500, 500, 560))))
+        val r = box.call("read_screen", args("""{"wait_for":"ergebnisse"}"""))
+        assertTrue(r.content[0]["text"]!!.jsonPrimitive.content.contains("Ergebnisse"))
+    }
+
+    @Test
+    fun `a screenshot sent with a message becomes the coordinate space`() = runTest {
+        box.noteScreenshot(250, 500)
+        box.call("tap", args("""{"x":125,"y":250}"""))
+        assertEquals(Pt(500f, 1000f), host.strokes.single().points.single())
     }
 
     @Test
@@ -112,7 +192,7 @@ class PhoneToolboxTest {
     @Test
     fun `writing uses the pen when it's set up and says so`() = runTest {
         box.call("screenshot", args("{}"))
-        host.stylusReady = true
+        host.pen = PenState.Ready
         val pen = box.call("write_handwriting", args("""{"text":"Hi","x":10,"y":10}"""))
         assertEquals(InputKind.Stylus, host.lastKind)
         assertTrue(pen.content[0]["text"]!!.jsonPrimitive.content.contains("stylus"))
@@ -127,9 +207,39 @@ class PhoneToolboxTest {
     }
 
     @Test
+    fun `once the pen worked, losing it stops drawing instead of panning with the finger`() = runTest {
+        box.call("screenshot", args("{}"))
+        host.pen = PenState.Ready
+        box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]]]}"""))
+        host.pen = PenState.Stopped
+        val drawn = host.gestures.size
+        val r = box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]]]}"""))
+        assertTrue(r.isError)
+        assertTrue(r.content[0]["text"]!!.jsonPrimitive.content.contains("start it again"))
+        assertEquals(drawn, host.gestures.size)
+    }
+
+    @Test
+    fun `results count strokes, so Claude knows how many undos a mistake takes`() = runTest {
+        box.call("screenshot", args("{}"))
+        val r = box.call("draw_strokes", args("""{"strokes":[[[10,10],[20,20]],[[30,30],[40,40]]]}"""))
+        assertTrue(r.content[0]["text"]!!.jsonPrimitive.content.startsWith("Drew as 2 strokes"))
+    }
+
+    @Test
+    fun `handwriting refuses characters the font lacks before drawing anything`() = runTest {
+        box.call("screenshot", args("{}"))
+        val r = box.call("write_handwriting", args("""{"text":"x ∀ 2π ✓","x":10,"y":10}"""))
+        assertTrue(r.isError)
+        val text = r.content[0]["text"]!!.jsonPrimitive.content
+        assertTrue(text.contains("∀") && text.contains("✓") && !text.contains("π"))
+        assertTrue(host.gestures.isEmpty())
+    }
+
+    @Test
     fun `taps stay finger touches even when the pen is set up`() = runTest {
         box.call("screenshot", args("{}"))
-        host.stylusReady = true
+        host.pen = PenState.Ready
         box.call("tap", args("""{"x":1,"y":1}"""))
         assertEquals(InputKind.Finger, host.lastKind)
     }
@@ -160,6 +270,30 @@ class HersheyFontTest {
         assertTrue(f.layout("ö", 0f, 0f, 21f).size > f.layout("o", 0f, 0f, 21f).size)
         assertEquals(f.layout("ss", 0f, 0f, 21f), f.layout("ß", 0f, 0f, 21f))
         assertEquals(f.layout("?", 0f, 0f, 21f), f.layout("€", 0f, 0f, 21f))
+    }
+
+    @Test
+    fun `greek letters and math symbols have glyphs in both styles`() {
+        for (name in listOf("romans", "scripts")) {
+            val f = font(name)
+            assertEquals(emptySet<Char>(), f.missing("π α β γ Δ Σ ω θ μ ± × ÷ · − ≠ ≈ ≤ ≥ √ ∫ ∂ ∞ ° → ∈ ∩ ∪ ⊥ ∠ ﬁ ½"))
+            assertEquals(setOf('∀', '✓'), f.missing("∀x ✓ ?"))
+            assertTrue(f.layout("≈", 0f, 0f, 21f).size >= 2)
+        }
+    }
+
+    @Test
+    fun `superscripts and subscripts are small, raised or lowered`() {
+        val f = font("romans")
+        val two = f.layout("2", 0f, 0f, 21f).flatten()
+        val sup = f.layout("²", 0f, 0f, 21f).flatten()
+        val sub = f.layout("₂", 0f, 0f, 21f).flatten()
+        val height = { pts: List<Pt> -> pts.maxOf { it.y } - pts.minOf { it.y } }
+        assertEquals(height(two) * 0.6f, height(sup), 0.5f)
+        assertTrue(sup.maxOf { it.y } < two.maxOf { it.y } - 8f)
+        assertTrue(sub.maxOf { it.y } > two.maxOf { it.y })
+        // x² is narrower than x2.
+        assertTrue(f.layout("x²", 0f, 0f, 21f).flatten().maxOf { it.x } < f.layout("x2", 0f, 0f, 21f).flatten().maxOf { it.x })
     }
 
     @Test

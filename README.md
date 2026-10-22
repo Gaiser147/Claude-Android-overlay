@@ -17,7 +17,9 @@ deinem **eigenen Claude-Abo, ohne API-Key und ohne Termux**.
 - **Echter Claude-Code-Agent:** Streaming-Antworten mit Markdown, Tool-Chips (Bash, Read,
   WebFetch …), Stopp-Knopf.
 - **Modellwahl mit Versionen:** Die Liste kommt direkt von der CLI (nur Modelle, die dein Abo
-  hat), z. B. „Opus 5.5 · claude-opus-5-5“; dazu ein Feld für jede andere Modell-ID.
+  hat), z. B. „Opus 5.5 · claude-opus-5-5“; dazu ein Feld für jede andere Modell-ID. Darunter
+  der **Effort** (Auto, Niedrig … Max – nur die Stufen, die das Modell kann); er gilt ab der
+  nächsten Nachricht, ohne Neustart, und steht neben dem Modellnamen.
 - **Sprechen statt tippen:** Mikrofon-Knopf (oder Kugel lange drücken) → Sprache wird live
   erkannt und abgeschickt; die Antwort wird schon während des Schreibens vorgelesen.
 - **Claude zeigt auf deinen Bildschirm** – wie ein Tutor mit Stift: gebogene Pfeile, umkreisen,
@@ -82,12 +84,21 @@ auf den echten Bildschirm um.
 
 | Tool | Wirkung | Braucht Steuerung |
 |---|---|---|
-| `screenshot` | frischer Screenshot (Overlay und Tastatur ausgeblendet) | nein |
+| `read_screen` | Bildschirm als Text aus der Bedienungshilfe: nummerierte Elemente mit Art, Beschriftung, Koordinate, Zustand | nein |
+| `screenshot` | frischer Screenshot (Overlay und Tastatur ausgeblendet), `detail` low/normal/high | nein |
 | `draw_annotations` / `clear_annotations` | Pfeil, Kreis/Ellipse, Box, Unterstreichung (auch wellig), Durchstreichen, Textmarker, ✓/✗, Punkt, Handschrift-Text, Pfad, SVG-Pfad | nein |
 | `list_apps`, `open_app` | Apps auflisten/öffnen | ja |
-| `tap`, `long_press`, `swipe` | Touch-Gesten | ja |
+| `tap`, `long_press`, `swipe` | Touch-Gesten, auf ein Element per Nummer oder auf Koordinaten | ja |
 | `draw_strokes`, `write_handwriting` | zeichnen / von Hand schreiben (Hershey-Einstrich-Schrift, Druck- oder Schreibschrift) – mit echtem Stift über Shizuku, sonst mit dem Finger | ja |
-| `type_text`, `press_key` | Text ins fokussierte Feld, Zurück/Home/Übersicht | ja |
+| `type_text`, `press_key` | Text in ein Feld (per Nummer: antippen, tippen, Enter in einem Aufruf), Zurück/Home/Übersicht | ja |
+
+**Sparsam mit Tokens:** Bilder sind der teure Teil (ein Screenshot kostet je nach Größe
+1000–2000 Tokens und bleibt im Verlauf). Aktionen antworten deshalb mit dem Bildschirm als Text
+(meist einige hundert Tokens) statt mit einem Bild; ein Screenshot kommt nur auf Wunsch
+(`screenshot: true`), wenn der Bildschirm kaum Text hat (Zeichenfläche, Spiel) und nach dem
+Zeichnen/Schreiben. Tool-Screenshots sind kleiner (1092 px statt 1568 px lange Kante,
+`detail: "low"` 768 px). `wait_for` wartet auf einen Text, statt Ladezeiten zu raten; danach wartet
+jede Aktion, bis sich der Bildschirm beruhigt hat.
 
 **Samsung Notes / S Pen:** Android erlaubt normalen Apps (auch über die Bedienungshilfe) nur
 Eingaben als *Finger*. Auf Geräten mit S Pen verschiebt der Finger in Samsung Notes das Blatt,
@@ -156,9 +167,9 @@ erzeugen mit `scripts/fetch-native-deps.sh` (lädt gepinnte Alpine-Pakete, prüf
 ## Manuelle Testliste (Gerät)
 
 Einrichtung → CLI-Download → Login → Kugel erscheint → Frage mit Screenshot (Overlay und
-Tastatur sind nicht im Bild) → Antwort streamt ohne Flackern → Modell-Auswahl zeigt Versionen →
+Tastatur sind nicht im Bild) → Antwort streamt ohne Flackern → Modell-Auswahl zeigt Versionen, Effort „Hoch“ steht im Kopf →
 Mikrofon: sprechen, Antwort wird vorgelesen → „Markiere, wo ich tippen muss“ zeichnet einen Pfeil →
-Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“ (ohne und mit Shizuku:
+Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“, dann „Zeichne sin(x) von 0 bis 2π mit Beschriftung“ (π, ², kein „?“) (ohne und mit Shizuku:
 mit Shizuku erscheint Tinte mit Druckverlauf, das Blatt verschiebt sich nicht) → Stopp während einer Antwort →
 App neu starten → „Letzte Unterhaltung fortsetzen“.
 

@@ -7,6 +7,7 @@ import io.github.gaiser147.claudeoverlay.capture.CaptureSequence
 import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
 import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
 import io.github.gaiser147.claudeoverlay.capture.ScreenshotSource
+import io.github.gaiser147.claudeoverlay.capture.ShotEncoder
 import io.github.gaiser147.claudeoverlay.capture.Shot
 import io.github.gaiser147.claudeoverlay.cli.Attachment
 import io.github.gaiser147.claudeoverlay.cli.ChatEvent
@@ -49,6 +50,8 @@ data class ChatUiState(
     val model: String = ClaudeSession.DEFAULT_MODEL,
     val models: List<ModelInfo> = ClaudeSession.FALLBACK_MODELS,
     val servedModel: String? = null,
+    /** Reasoning effort, or null for the model's default. */
+    val effort: String? = null,
     val screenshots: Boolean = true,
     val canCapture: Boolean = false,
     val pendingFiles: List<String> = emptyList(),
@@ -87,6 +90,8 @@ class ChatController(
     mcpConfig: String?,
     /** Called as each new user message goes out (the overlay clears old drawings). */
     private val onNewTurn: () -> Unit,
+    /** A screenshot went out with a message: it's now the one Claude measures coordinates in. */
+    private val onShotSent: (Shot) -> Unit = {},
 ) {
     private val captureSequence = CaptureSequence(captureWindow)
     private val session = ClaudeSession(graph.env, graph.proxy, mcpConfig)
@@ -115,10 +120,13 @@ class ChatController(
         scope.launch {
             val model = graph.settings.model()
             session.setModel(model)
+            val effort = graph.settings.effort()
+            session.setEffort(effort)
             val models = graph.settings.models()
             _state.update {
                 it.copy(
                     model = model,
+                    effort = effort,
                     models = models ?: it.models,
                     screenshots = graph.settings.screenshots(),
                     resumableSession = graph.settings.lastSession(),
@@ -179,6 +187,12 @@ class ChatController(
         scope.launch { graph.settings.setModel(model) }
     }
 
+    fun setEffort(level: String?) {
+        session.setEffort(level)
+        _state.update { it.copy(effort = level) }
+        scope.launch { graph.settings.setEffort(level) }
+    }
+
     fun addFiles(files: List<Attachment>) {
         pending += files
         _state.update { it.copy(pendingFiles = pending.map(Attachment::name)) }
@@ -213,7 +227,7 @@ class ChatController(
     fun setDrawingsShown(shown: Boolean) = _state.update { it.copy(drawingsShown = shown) }
 
     /** A screenshot for the phone tools: always taken, whatever the screenshot toggle says. */
-    suspend fun captureForTools(withDrawings: Boolean = false): Shot? = takeShot(withDrawings)
+    suspend fun captureForTools(withDrawings: Boolean, maxEdge: Int): Shot? = takeShot(withDrawings, maxEdge)
 
     /** Mic button: start dictating, or finish (which sends what was said). */
     fun toggleVoice() {
@@ -271,7 +285,10 @@ class ChatController(
                     screenshotSize = shot?.let { it.width to it.height },
                 )
             }
-            if (shot != null && !unchanged) lastSentFingerprint = shot.fingerprint
+            if (shot != null && !unchanged) {
+                lastSentFingerprint = shot.fingerprint
+                onShotSent(shot)
+            }
             val note = listOfNotNull(
                 when {
                     unchanged -> "🖼 unchanged"
@@ -362,9 +379,9 @@ class ChatController(
         projection = null
     }
 
-    private suspend fun takeShot(withDrawings: Boolean = false): Shot? {
+    private suspend fun takeShot(withDrawings: Boolean = false, maxEdge: Int = ShotEncoder.MAX_EDGE): Shot? {
         val source = screenshotSource() ?: return null
-        return runCatching { captureSequence.run(source, keepDrawings = withDrawings) }.getOrNull()
+        return runCatching { captureSequence.run(source, keepDrawings = withDrawings, maxEdge = maxEdge) }.getOrNull()
     }
 
     private fun onEvent(event: ChatEvent) {

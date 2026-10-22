@@ -38,6 +38,7 @@ class StylusService : IStylusService.Stub() {
 
     override fun inject(actions: IntArray, xs: FloatArray, ys: FloatArray, pressures: FloatArray, times: LongArray): Boolean {
         val (target, method) = injector
+        val device = deviceId
         val start = SystemClock.uptimeMillis()
         var downTime = start
         for (i in actions.indices) {
@@ -48,6 +49,9 @@ class StylusService : IStylusService.Stub() {
             val action = when (actions[i]) {
                 StylusPlan.DOWN -> MotionEvent.ACTION_DOWN.also { downTime = due }
                 StylusPlan.UP -> MotionEvent.ACTION_UP
+                StylusPlan.HOVER_ENTER -> MotionEvent.ACTION_HOVER_ENTER.also { downTime = due }
+                StylusPlan.HOVER_MOVE -> MotionEvent.ACTION_HOVER_MOVE
+                StylusPlan.HOVER_EXIT -> MotionEvent.ACTION_HOVER_EXIT
                 else -> MotionEvent.ACTION_MOVE
             }
             val props = arrayOf(MotionEvent.PointerProperties().apply {
@@ -61,7 +65,7 @@ class StylusService : IStylusService.Stub() {
                 size = PEN_SIZE
             })
             val event = MotionEvent.obtain(
-                downTime, due, action, 1, props, coords, 0, 0, 1f, 1f, deviceId, 0, InputDevice.SOURCE_STYLUS, 0,
+                downTime, due, action, 1, props, coords, 0, 0, 1f, 1f, device, 0, InputDevice.SOURCE_STYLUS, 0,
             )
             val accepted = try {
                 method.invoke(target, event, INJECT_ASYNC) as Boolean

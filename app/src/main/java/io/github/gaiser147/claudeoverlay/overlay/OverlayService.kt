@@ -46,6 +46,8 @@ import io.github.gaiser147.claudeoverlay.tools.Annotation
 import io.github.gaiser147.claudeoverlay.stylus.Stylus
 import io.github.gaiser147.claudeoverlay.tools.HersheyFont
 import io.github.gaiser147.claudeoverlay.tools.InputKind
+import io.github.gaiser147.claudeoverlay.tools.PenState
+import io.github.gaiser147.claudeoverlay.tools.ScreenSnapshot
 import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
 import io.github.gaiser147.claudeoverlay.tools.PhoneHost
 import io.github.gaiser147.claudeoverlay.tools.PhoneToolbox
@@ -107,13 +109,13 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         current = this
         wm = getSystemService(WindowManager::class.java)
         annotations = AnnotationLayer(this, this)
-        mcp = McpHttpServer(
-            PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
-        )
+        val toolbox = PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
+        mcp = McpHttpServer(toolbox)
         controller = ChatController(
             AppGraph.get(this), safeScope, captureWindow, VoiceInput(this), Speaker(this),
             mcpConfig = mcp.cliConfig("phone"),
             onNewTurn = ::clearDrawings,
+            onShotSent = { toolbox.noteScreenshot(it.width, it.height) },
         )
         val (sw, sh) = screenSize()
         bubbleX = sw - dp(BUBBLE_DP) - dp(8)
@@ -326,9 +328,16 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     }
 
     private val phoneHost = object : PhoneHost {
-        override suspend fun screenshot(withDrawings: Boolean): Shot? = controller.captureForTools(withDrawings)
+        override suspend fun screenshot(withDrawings: Boolean, maxEdge: Int): Shot? =
+            controller.captureForTools(withDrawings, maxEdge)
 
         override fun screenSize(): Pair<Int, Int> = physicalScreenSize(this@OverlayService)
+
+        override suspend fun readScreen(): ScreenSnapshot? {
+            val service = ControlService.instance.value ?: return null
+            val (sw, sh) = screenSize()
+            return withContext(Dispatchers.Default) { runCatching { service.readScreen(sw, sh) }.getOrNull() }
+        }
 
         override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long =
             withContext(Dispatchers.Main) {
@@ -363,6 +372,16 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
                 }
             } finally {
                 stepAside(false)
+            }
+        }
+
+        override fun penState(): PenState {
+            Stylus.refresh()
+            return when (Stylus.state.value) {
+                Stylus.State.Ready -> PenState.Ready
+                Stylus.State.NotInstalled -> PenState.NotSetUp
+                Stylus.State.NotRunning -> PenState.Stopped
+                Stylus.State.NeedsPermission -> PenState.NoPermission
             }
         }
 

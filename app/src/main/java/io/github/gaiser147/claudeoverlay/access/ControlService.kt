@@ -7,7 +7,12 @@ import android.content.ClipboardManager
 import android.graphics.Path
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
+import android.graphics.Rect
+import android.view.accessibility.AccessibilityWindowInfo
+import io.github.gaiser147.claudeoverlay.tools.Box
+import io.github.gaiser147.claudeoverlay.tools.ScreenSnapshot
 import io.github.gaiser147.claudeoverlay.tools.Stroke
+import io.github.gaiser147.claudeoverlay.tools.UiNode
 import android.graphics.Bitmap
 import android.os.Build
 import android.view.Display
@@ -124,6 +129,69 @@ class ControlService : AccessibilityService() {
         return "Typed ${text.length} characters" + if (submit) " and pressed enter" else ""
     }
 
+    /**
+     * The other apps' windows as accessibility trees, topmost first, for reading the screen as
+     * text. Our own windows are left out; the keyboard is only noted by where it starts.
+     */
+    fun readScreen(screenWidth: Int, screenHeight: Int): ScreenSnapshot {
+        val screen = Box(0, 0, screenWidth, screenHeight)
+        val roots = mutableListOf<UiNode>()
+        var keyboardTop: Int? = null
+        var app: String? = null
+        val budget = intArrayOf(MAX_NODES)
+        val bounds = Rect()
+        for (w in runCatching { windows }.getOrDefault(emptyList()).sortedByDescending { it.layer }) {
+            w.getBoundsInScreen(bounds)
+            when (w.type) {
+                AccessibilityWindowInfo.TYPE_INPUT_METHOD -> keyboardTop = bounds.top
+                AccessibilityWindowInfo.TYPE_APPLICATION, AccessibilityWindowInfo.TYPE_SYSTEM -> {
+                    // System windows only when they take over (notification shade, system
+                    // dialogs), not the status and navigation bars.
+                    if (w.type == AccessibilityWindowInfo.TYPE_SYSTEM &&
+                        bounds.width().toLong() * bounds.height() < screenWidth.toLong() * screenHeight / 3
+                    ) continue
+                    val root = w.root ?: continue
+                    if (root.packageName == packageName) continue
+                    if (app == null) app = appLabel(root.packageName?.toString())
+                    toUiNode(root, 0, budget)?.let(roots::add)
+                }
+            }
+        }
+        if (roots.isEmpty()) rootInActiveWindow?.takeIf { it.packageName != packageName }?.let { root ->
+            app = appLabel(root.packageName?.toString())
+            toUiNode(root, 0, budget)?.let(roots::add)
+        }
+        return ScreenSnapshot(app, roots, screen, keyboardTop)
+    }
+
+    private fun toUiNode(node: AccessibilityNodeInfo, depth: Int, budget: IntArray): UiNode? {
+        if (!node.isVisibleToUser || depth > MAX_DEPTH || budget[0]-- <= 0) return null
+        val r = Rect().also(node::getBoundsInScreen)
+        val showingHint = node.isShowingHintText
+        val children = (0 until node.childCount).mapNotNull { i -> node.getChild(i)?.let { toUiNode(it, depth + 1, budget) } }
+        return UiNode(
+            text = node.text?.toString()?.takeUnless { showingHint },
+            description = node.contentDescription?.toString(),
+            hint = node.hintText?.toString(),
+            role = node.className?.toString()?.substringAfterLast('.').orEmpty(),
+            clickable = node.isClickable || node.isLongClickable,
+            editable = node.isEditable,
+            scrollable = node.isScrollable,
+            checkable = node.isCheckable,
+            checked = node.isChecked,
+            selected = node.isSelected,
+            focused = node.isFocused,
+            enabled = node.isEnabled,
+            bounds = Box(r.left, r.top, r.right, r.bottom),
+            children = children,
+        )
+    }
+
+    private fun appLabel(pkg: String?): String? = pkg?.let {
+        runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(it, 0)).toString() }
+            .getOrDefault(it)
+    }
+
     fun pressKey(key: String): Boolean {
         val action = when (key) {
             "back" -> GLOBAL_ACTION_BACK
@@ -139,6 +207,9 @@ class ControlService : AccessibilityService() {
     companion object {
         private const val SCREENSHOT_INTERVAL_MS = 350L
         private const val PEN_LIFT_MS = 30L
+        /** Enough for busy screens; a runaway tree (huge lists, web pages) is cut off. */
+        private const val MAX_NODES = 1500
+        private const val MAX_DEPTH = 60
 
         private val _instance = MutableStateFlow<ControlService?>(null)
         /** The connected service, or null while it's off in the system's accessibility settings. */
@@ -152,12 +223,12 @@ class ControlService : AccessibilityService() {
 /** Screenshots via [ControlService]: taken at call time, so only the compositor needs to settle. */
 @RequiresApi(30)
 class AccessibilityShots(private val service: ControlService) : ScreenshotSource {
-    override suspend fun capture(notBeforeNanos: Long): Shot? {
+    override suspend fun capture(notBeforeNanos: Long, maxEdge: Int): Shot? {
         // Two vsyncs for the hidden overlay to leave the composited screen.
         val settle = (notBeforeNanos + SETTLE_NANOS - System.nanoTime()) / 1_000_000
         if (settle > 0) delay(settle)
         val bitmap = service.screenshot() ?: return null
-        return withContext(Dispatchers.Default) { ShotEncoder.encode(bitmap) }
+        return withContext(Dispatchers.Default) { ShotEncoder.encode(bitmap, maxEdge) }
     }
 
     private companion object {

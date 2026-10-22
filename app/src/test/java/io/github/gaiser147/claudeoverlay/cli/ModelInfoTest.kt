@@ -33,6 +33,23 @@ class ModelInfoTest {
     }
 
     @Test
+    fun `effort levels come from the CLI and survive the settings round trip`() {
+        val models = fromFixture()
+        assertEquals(listOf("low", "medium", "high", "xhigh", "max"), ModelInfo.effortLevels(models, "sonnet"))
+        assertEquals(listOf("low", "medium", "high", "xhigh", "max"), ModelInfo.effortLevels(models, "claude-opus-5-5"))
+        assertEquals(models, ModelInfo.parseList(Json.parseToJsonElement(ModelInfo.toJson(models)).jsonArray))
+    }
+
+    @Test
+    fun `a model without effort offers none, an unlisted id the basic three`() {
+        val noEffort = ModelInfo.parseList(
+            Json.parseToJsonElement("""[{"value":"x","supportsEffort":false,"supportedEffortLevels":["low"]}]""").jsonArray
+        )
+        assertEquals(emptyList<String>(), ModelInfo.effortLevels(noEffort, "x"))
+        assertEquals(ModelInfo.DEFAULT_EFFORT_LEVELS, ModelInfo.effortLevels(fromFixture(), "claude-opus-4-8"))
+    }
+
+    @Test
     fun `descriptions without a version fall back to the display name`() {
         val m = ModelInfo("x", null, "Mystery", "no separator here")
         assertEquals("Mystery", m.title)

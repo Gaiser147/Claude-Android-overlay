@@ -33,6 +33,9 @@ class ClaudeSession(
         private set
     @Volatile var model: String = DEFAULT_MODEL
         private set
+    /** Reasoning effort (low … max), or null for the model's default. */
+    @Volatile var effort: String? = null
+        private set
 
     private var process: Process? = null
     private var stdin: BufferedWriter? = null
@@ -59,6 +62,7 @@ class ClaudeSession(
             addAll(listOf("-p", "--input-format", "stream-json", "--output-format", "stream-json"))
             addAll(listOf("--verbose", "--include-partial-messages"))
             addAll(listOf("--model", model, "--permission-mode", "bypassPermissions"))
+            effort?.let { addAll(listOf("--effort", it)) }
             addAll(listOf("--append-system-prompt", SYSTEM_APPEND))
             // No interactive question UI here; the model asks inline instead (config.DISALLOWED_TOOLS).
             addAll(listOf("--disallowedTools", "AskUserQuestion"))
@@ -120,6 +124,18 @@ class ClaudeSession(
         if (process?.isAlive == true) control { put("subtype", "set_model"); put("model", model) }
     }
 
+    /**
+     * Sets the reasoning effort ([level] null: the model's default); takes effect from the
+     * next turn. The CLI caps it at what the current model supports.
+     */
+    fun setEffort(level: String?) = synchronized(lock) {
+        effort = level
+        if (process?.isAlive == true) control {
+            put("subtype", "apply_flag_settings")
+            putJsonObject("settings") { put("effortLevel", level) }
+        }
+    }
+
     fun stop() = synchronized(lock) { stopLocked() }
 
     /**
@@ -165,7 +181,7 @@ class ClaudeSession(
 
         /** Shown until the CLI has reported its own menu once (then that list is cached). */
         val FALLBACK_MODELS = listOf("opus", "fable", "sonnet", "haiku").map {
-            ModelInfo(it, null, it.replaceFirstChar(Char::uppercase), "")
+            ModelInfo(it, null, it.replaceFirstChar(Char::uppercase), "", ModelInfo.DEFAULT_EFFORT_LEVELS)
         }
 
         /** Android counterpart of the desktop overlay's config.SYSTEM_APPEND. */
@@ -174,8 +190,8 @@ class ClaudeSession(
             Keep replies concise and skimmable since they render in a small floating window on a phone; expand only when asked.
             If you need to ask the user something, ask it inline as plain text and wait for their typed reply. This overlay is a plain chat with no interactive question UI, so never use a structured multiple-choice question tool.
             Your shell is bash inside this app's private Android sandbox, without root. Only Android's toybox utilities are installed (ls, cat, grep, find, sed and similar; no curl, git, python or package manager). Your working directory is a private scratch folder; use WebFetch and WebSearch for anything online.
-            The phone tools (mcp__phone__*) work on the user's real screen. Coordinates are always pixels in the most recent screenshot, whose size is stated with it. Use draw_annotations to point things out visually (arrows, boxes, circles, highlights, short labels) when showing beats describing — e.g. where to tap, which part of a document or homework task you mean, or marking mistakes; keep drawings few and clear, and clear them when they're no longer relevant.
-            If the user has switched on phone control you can also open apps, tap, swipe, type, draw with strokes and write by hand (write_handwriting, e.g. into Samsung Notes). Your touches always arrive as a finger, never as a stylus: in note apps that only draw with the pen, ask the user to allow finger drawing or use the app's text tool with type_text. Work like a careful person: look at the screenshot each action returns before the next step, and stop to ask before anything irreversible or outward-facing (sending messages, posting, purchases, deleting, changing settings). If a control tool reports that control is off, tell the user how to enable it instead of retrying.
+            The phone tools (mcp__phone__*) work on the user's real screen. Coordinates are always pixels in the most recent screenshot, whose size is stated with it. Be frugal with images, they are the expensive part: to find and operate things use read_screen (the screen as numbered text elements) and the text every action returns, tap or type into elements by number (type_text with element and submit does field, text and enter in one call), use wait_for instead of guessing load times, and take a screenshot only when you need to see pictures, layout, ink or something the text lacks (detail 'low' is often enough). For public information (web pages, docs) WebFetch and WebSearch are cheaper than operating apps. Use draw_annotations to point things out visually (arrows, boxes, circles, highlights, short labels) when showing beats describing — e.g. where to tap, which part of a document or homework task you mean, or marking mistakes; keep drawings few and clear, and clear them when they're no longer relevant.
+            If the user has switched on phone control you can also open apps, tap, swipe, type, draw with strokes and write by hand (write_handwriting, e.g. into Samsung Notes). Taps and swipes arrive as a finger; draw_strokes and write_handwriting use the real stylus when the user has set it up (the tool result says which), else a finger, which note apps that only draw with the pen treat as panning: then follow the tool's advice. In note apps every stroke is one undo step and the stroke eraser removes whole strokes, so undo a mistake right away rather than erasing near other ink. Work like a careful person: check what each action returns before the next step, and stop to ask before anything irreversible or outward-facing (sending messages, posting, purchases, deleting, changing settings). If a control tool reports that control is off, tell the user how to enable it instead of retrying.
         """.trimIndent().replace("\n", " ")
     }
 }

@@ -17,9 +17,11 @@ interface PhoneHost {
      * A fresh screenshot with the overlay hidden; also becomes the coordinate reference.
      * [withDrawings] keeps Claude's drawings in it, so it can check where they landed.
      */
-    suspend fun screenshot(withDrawings: Boolean = false): Shot?
+    suspend fun screenshot(withDrawings: Boolean = false, maxEdge: Int = PhoneToolbox.TOOL_EDGE): Shot?
     /** Screen size in pixels, to map screenshot coordinates. */
     fun screenSize(): Pair<Int, Int>
+    /** The other apps' accessibility trees, or null when the accessibility service is off. */
+    suspend fun readScreen(): ScreenSnapshot?
 
     /** Shows the drawings; returns how long they take to finish appearing (ms). */
     suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long
@@ -33,6 +35,8 @@ interface PhoneHost {
      * or null if Android refused.
      */
     suspend fun gesture(strokes: List<Stroke>, preferStylus: Boolean = false): InputKind?
+    /** Whether real pen input is available right now. */
+    fun penState(): PenState
     /** Types into the focused field; returns a short description of what happened. */
     suspend fun typeText(text: String, submit: Boolean): String
     suspend fun pressKey(key: String): Boolean
@@ -44,26 +48,42 @@ interface PhoneHost {
 /** How a gesture reached the app: as a finger (accessibility) or as a pen (Shizuku). */
 enum class InputKind { Finger, Stylus }
 
+/** Real pen input: [Ready], never set up, or set up but [Stopped] / missing [NoPermission]. */
+enum class PenState { Ready, NotSetUp, Stopped, NoPermission }
+
 /**
  * Claude's tools for the phone, served over MCP: draw on the screen (always available) and
  * operate apps (only when the user switched phone control on). Every coordinate is in pixels
- * of the most recent screenshot, which is what the model can measure; every action answers
- * with a fresh screenshot so the model sees what it did, like computer use.
+ * of the most recent screenshot, which is what the model can measure. Actions answer with
+ * the screen as text (numbered elements from the accessibility tree), which costs a fraction
+ * of a screenshot; pictures come when asked for, when the screen has little text (a canvas,
+ * a game), and after drawing, where the ink is what matters.
  */
 class PhoneToolbox(
     private val host: PhoneHost,
     private val print: HersheyFont,
     private val cursive: HersheyFont,
-    private val settleMs: Long = 700,
+    private val settleMs: Long = 400,
     private val sleep: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
 ) : Toolbox {
     @Volatile private var geometry: ShotGeometry? = null
+    /** Where the elements of the last screen text are, by number (screen pixels). */
+    @Volatile private var elements: List<Pt> = emptyList()
+    /** The pen worked earlier: the app on screen likely draws only with it. */
+    @Volatile private var penWorked = false
 
     override fun definitions(): List<JsonObject> = DEFINITIONS
 
+    /** A screenshot of this size went out with a message: coordinates now refer to it. */
+    fun noteScreenshot(width: Int, height: Int) {
+        val (sw, sh) = host.screenSize()
+        geometry = ShotGeometry(width, height, sw, sh)
+    }
+
     override suspend fun call(name: String, arguments: JsonObject): ToolResult = try {
         when (name) {
-            "screenshot" -> screenshotResult("Screenshot")
+            "screenshot" -> screenshotResult("Screenshot", maxEdge = edge(arguments))
+            "read_screen" -> { settle(arguments, acted = false); screenResult("Screen", arguments) }
             "draw_annotations" -> draw(arguments)
             "clear_annotations" -> { host.clearAnnotations(); ToolResult.text("Cleared.") }
             "list_apps" -> control { listApps() }
@@ -71,27 +91,33 @@ class PhoneToolbox(
                 val query = arguments.str("name")
                 val opened = host.openApp(query)
                     ?: return@control ToolResult.text("No app matches '$query'. Use list_apps.", true)
-                act("Opened $opened") {}
+                act("Opened $opened", arguments) {}
             }
-            "tap" -> control { val p = point(arguments, "x", "y"); act("Tapped") { gestureOrFail(listOf(Stroke(listOf(p), TAP_MS))) } }
+            "tap" -> control { val p = target(arguments); act("Tapped", arguments) { gestureOrFail(listOf(Stroke(listOf(p), TAP_MS))) } }
             "long_press" -> control {
-                val p = point(arguments, "x", "y")
-                act("Long-pressed") { gestureOrFail(listOf(Stroke(listOf(p), arguments.long("duration_ms") ?: LONG_PRESS_MS))) }
+                val p = target(arguments)
+                act("Long-pressed", arguments) { gestureOrFail(listOf(Stroke(listOf(p), arguments.long("duration_ms") ?: LONG_PRESS_MS))) }
             }
             "swipe" -> control {
                 val a = point(arguments, "x1", "y1")
                 val b = point(arguments, "x2", "y2")
-                act("Swiped") { gestureOrFail(listOf(Stroke(listOf(a, b), arguments.long("duration_ms") ?: SWIPE_MS))) }
+                act("Swiped", arguments) { gestureOrFail(listOf(Stroke(listOf(a, b), arguments.long("duration_ms") ?: SWIPE_MS))) }
             }
             "draw_strokes" -> control { drawStrokes(arguments) }
             "write_handwriting" -> control { handwriting(arguments) }
             "type_text" -> control {
-                val said = host.typeText(arguments.str("text"), arguments.bool("submit") ?: false)
-                act(said) {}
+                val text = arguments.str("text")
+                // Tap the field first when one is named: one call instead of tap, look, type.
+                if (arguments.containsKey("element")) {
+                    gestureOrFail(listOf(Stroke(listOf(target(arguments)), TAP_MS)))
+                    sleep(FOCUS_MS)
+                }
+                val said = host.typeText(text, arguments.bool("submit") ?: false)
+                act(said, arguments) {}
             }
             "press_key" -> control {
                 val key = arguments.str("key")
-                if (!host.pressKey(key)) ToolResult.text("Unknown key '$key'.", true) else act("Pressed $key") {}
+                if (!host.pressKey(key)) ToolResult.text("Unknown key '$key'.", true) else act("Pressed $key", arguments) {}
             }
             else -> ToolResult.text("Unknown tool $name", true)
         }
@@ -104,8 +130,79 @@ class PhoneToolbox(
     private suspend fun geometry(): ShotGeometry =
         geometry ?: run { screenshotResult("Screenshot"); geometry } ?: throw BadArgs("No screenshot available")
 
-    private suspend fun screenshotResult(caption: String, withDrawings: Boolean = false): ToolResult {
-        val shot = host.screenshot(withDrawings) ?: return ToolResult.text("Couldn't take a screenshot.", true)
+    /** The coordinate space for screen text: the latest screenshot's, or a tool screenshot's size. */
+    private fun textGeometry(): ShotGeometry = geometry ?: run {
+        val (sw, sh) = host.screenSize()
+        ShotGeometry.forScreen(sw, sh, TOOL_EDGE).also { geometry = it }
+    }
+
+    private fun edge(args: JsonObject) = when (args.optStr("detail")) {
+        "low" -> LOW_EDGE
+        "high" -> HIGH_EDGE
+        else -> TOOL_EDGE
+    }
+
+    /** An element number from the last screen text, or x/y in screenshot pixels. */
+    private fun target(args: JsonObject): Pt {
+        val id = args.long("element") ?: return point(args, "x", "y")
+        if (elements.isEmpty()) throw BadArgs("No element numbers yet: call read_screen first.")
+        return elements.getOrNull(id.toInt() - 1)
+            ?: throw BadArgs("No element [$id] on the last screen (1–${elements.size}); call read_screen again.")
+    }
+
+    /**
+     * Waits until the screen has settled after an action: optionally until [wait_for] text
+     * shows up, then until two readings a moment apart agree (a page done loading), within
+     * limits, instead of a fixed guess.
+     */
+    private suspend fun settle(args: JsonObject, acted: Boolean = true) {
+        if (acted) sleep(settleMs)
+        args.optStr("wait_for")?.takeIf { it.isNotBlank() }?.let { want ->
+            val limit = ((args.float("timeout_s") ?: DEFAULT_WAIT_S).coerceIn(0f, MAX_WAIT_S) * 1000).toLong()
+            var waited = 0L
+            while (waited < limit) {
+                val now = host.readScreen() ?: break
+                if (ScreenText.elements(now).any { it.label.contains(want, ignoreCase = true) }) break
+                sleep(POLL_MS)
+                waited += POLL_MS
+            }
+        }
+        if (!acted) return
+        var previous = host.readScreen()?.let(ScreenText::elements) ?: return
+        var waited = 0L
+        while (waited < STABLE_MAX_MS) {
+            sleep(POLL_MS)
+            waited += POLL_MS
+            val now = host.readScreen()?.let(ScreenText::elements) ?: return
+            if (now == previous) return
+            previous = now
+        }
+    }
+
+    /**
+     * The screen as numbered text lines; with a screenshot too when asked for
+     * (`screenshot: true`) or when there's too little text to work from.
+     */
+    private suspend fun screenResult(caption: String, args: JsonObject): ToolResult {
+        val snapshot = host.readScreen() ?: return screenshotResult("$caption (screen text unavailable)", maxEdge = edge(args))
+        val found = ScreenText.elements(snapshot)
+        val g = textGeometry()
+        elements = found.take(ScreenText.MAX_ELEMENTS).map { it.center }
+        val text = "$caption:\n" + ScreenText.render(snapshot, found, g)
+        if (args.bool("screenshot") != true && !ScreenText.isSparse(found)) return ToolResult.text(text)
+        val shot = screenshotResult("Screenshot", maxEdge = edge(args))
+        // The picture may have a different size than the space the text used: renumber in it.
+        return if (shot.isError) ToolResult.text(text) else ToolResult(
+            listOf(ToolResult.textBlock("$caption:\n" + ScreenText.render(snapshot, found, geometry ?: g))) + shot.content
+        )
+    }
+
+    private suspend fun screenshotResult(
+        caption: String,
+        withDrawings: Boolean = false,
+        maxEdge: Int = TOOL_EDGE,
+    ): ToolResult {
+        val shot = host.screenshot(withDrawings, maxEdge) ?: return ToolResult.text("Couldn't take a screenshot.", true)
         val (sw, sh) = host.screenSize()
         geometry = ShotGeometry(shot.width, shot.height, sw, sh)
         return ToolResult(
@@ -134,10 +231,10 @@ class PhoneToolbox(
     private inline fun control(block: () -> ToolResult): ToolResult =
         host.controlBlockedReason()?.let { ToolResult.text(it, true) } ?: block()
 
-    private suspend fun act(what: String, action: suspend () -> Unit): ToolResult {
+    private suspend fun act(what: String, args: JsonObject, action: suspend () -> Unit): ToolResult {
         action()
-        sleep(settleMs)
-        return screenshotResult("$what. Screen now")
+        settle(args)
+        return screenResult("$what. Screen now", args)
     }
 
     private suspend fun gestureOrFail(strokes: List<Stroke>, preferStylus: Boolean = false): InputKind =
@@ -145,10 +242,17 @@ class PhoneToolbox(
 
     /** Draws or writes with the pen when it's set up, and says which input the app got. */
     private suspend fun penAct(what: String, strokes: List<Stroke>): ToolResult {
+        val pen = host.penState()
+        // Once the pen has worked, finger touches would only pan a pen-only canvas: stop instead.
+        if (penWorked && pen != PenState.Ready) return ToolResult.text("Nothing was drawn: ${penLost(pen)}", true)
         val kind = gestureOrFail(strokes, preferStylus = true)
+        if (kind == InputKind.Stylus) penWorked = true
         sleep(settleMs)
-        return screenshotResult("$what ${if (kind == InputKind.Stylus) STYLUS_NOTE else FINGER_NOTE}. Screen now")
+        val note = if (kind == InputKind.Stylus) STYLUS_NOTE else fingerNote(pen)
+        return screenshotResult("$what ${strokes.size.strokes()} $note. Screen now")
     }
+
+    private fun Int.strokes() = if (this == 1) "as 1 stroke" else "as $this strokes"
 
     private fun listApps(): ToolResult = ToolResult.text(
         host.listApps().sortedBy { it.first.lowercase() }.joinToString("\n") { (label, pkg) -> "$label ($pkg)" }
@@ -168,7 +272,7 @@ class PhoneToolbox(
             Strokes.drawn(pts)
         }
         if (strokes.size > MAX_STROKES) throw BadArgs("at most $MAX_STROKES strokes per call")
-        return penAct("Drew ${strokes.size} stroke(s)", strokes)
+        return penAct("Drew", strokes)
     }
 
     private suspend fun handwriting(args: JsonObject): ToolResult {
@@ -179,6 +283,10 @@ class PhoneToolbox(
         val height = args.float("letter_height") ?: DEFAULT_LETTER_HEIGHT
         val maxWidth = args.float("max_width")
         val font = if (args.optStr("style") == "cursive") cursive else print
+        font.missing(text).takeIf { it.isNotEmpty() }?.let { chars ->
+            throw BadArgs("Nothing was written: the handwriting font has no ${chars.joinToString(" ")}. " +
+                "Spell it differently or draw it with draw_strokes.")
+        }
         // Lay out in screenshot space, then map every point, so wrapping matches what Claude sees.
         val strokes = font.layout(text, x, y, height, maxWidth).map { s ->
             Strokes.drawn(s.map { p -> g.toScreen(p.x, p.y) })
@@ -210,19 +318,52 @@ class PhoneToolbox(
         const val MAX_HANDWRITING_STROKES = 600
         const val DEFAULT_LETTER_HEIGHT = 28f
         const val SETTLE_AFTER_DRAW_MS = 250L
+        /** Long edge of tool screenshots: ~1000 tokens on a tablet instead of ~2000 at full size. */
+        const val TOOL_EDGE = 1092
+        const val LOW_EDGE = 768
+        const val HIGH_EDGE = 1568
+        const val FOCUS_MS = 400L
+        const val POLL_MS = 300L
+        const val STABLE_MAX_MS = 2_400L
+        const val DEFAULT_WAIT_S = 8f
+        const val MAX_WAIT_S = 20f
 
         const val STYLUS_NOTE = "with the stylus (real pen input)"
+
+        /** Why the pen, once set up, can't draw now — in words the model can pass on. */
+        fun penLost(pen: PenState) = when (pen) {
+            PenState.NoPermission -> "real pen input lost its Shizuku permission. Ask the user to allow it again " +
+                "in the Claude Overlay app (setup step 'Real stylus')."
+            else -> "real pen input stopped: the Shizuku app isn't running (it stops when the device restarts, " +
+                "and on some devices when wireless debugging turns off). Ask the user to open Shizuku and start it " +
+                "again, then try once more."
+        }
 
         /**
          * Without Shizuku, apps can inject touches only as a finger, and note apps on pen
          * devices often pan with the finger instead of drawing.
          */
-        const val FINGER_NOTE = "as finger touches (real pen input isn't set up). Check the screenshot: if no ink " +
-            "appeared or the page only moved, the app draws with the stylus only. Then tell the user they can set up " +
-            "real pen input in the Claude Overlay app (setup step 'Real stylus', via the Shizuku app), allow drawing " +
-            "with the finger in the note app, or let you write with the app's text tool (keyboard icon) and type_text"
+        fun fingerNote(pen: PenState) = "as finger touches (" +
+            (if (pen == PenState.NotSetUp) "real pen input isn't set up" else penLost(pen)) +
+            "). Check the screenshot: if no ink appeared or the page only moved, the app draws with the stylus only. " +
+            "Then tell the user they can set up real pen input in the Claude Overlay app (setup step 'Real stylus', " +
+            "via the Shizuku app), allow drawing with the finger in the note app, or let you write with the app's " +
+            "text tool (keyboard icon) and type_text"
+
+        /** How pen apps treat what Claude draws, so it can correct mistakes without collateral damage. */
+        private const val PEN_APP_NOTE = " In note apps every stroke is its own undo step (the result says how many " +
+            "strokes were drawn), and the stroke eraser removes whole strokes, so undo right after a mistake rather " +
+            "than erasing near other ink."
 
         private const val XY = """{"type":"number","description":"pixels in the latest screenshot"}"""
+        private const val ELEMENT = """{"type":"integer","description":"element number from the latest screen text (read_screen or an action's result); instead of x/y"}"""
+        private const val DETAIL = """{"type":"string","enum":["low","normal","high"],"description":"screenshot resolution: low (~500 tokens) for layout, normal, high (~2000 tokens) to read small text"}"""
+        /** What every action takes besides its own arguments. */
+        private const val AFTER = """"wait_for":{"type":"string","description":"wait until an element containing this text appears (e.g. a page loading)"},
+                  "timeout_s":{"type":"number","description":"how long wait_for may wait (default 8, max 20)"},
+                  "screenshot":{"type":"boolean","description":"also return a screenshot (costs ~1000 tokens; only when the text isn't enough)"},
+                  "detail":$DETAIL"""
+        private const val RETURNS_TEXT = "Returns the screen as text afterwards (numbered elements; a screenshot only when asked for or when the screen has little text)."
         private const val POINT = """{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"[x, y] in screenshot pixels"}"""
         private const val COLOR = """{"type":"string","description":"red, orange, yellow, green, blue, purple, pink, black, gray or #RRGGBB (default: red-orange pen; highlights default to yellow)"}"""
 
@@ -233,9 +374,18 @@ class PhoneToolbox(
 
         private val DEFINITIONS = listOf(
             tool(
+                "read_screen",
+                "Read the user's screen as text from the accessibility tree: the app, then one line per element — " +
+                    "[number] kind \"label\" @x,y and state (focused, on/off, under keyboard). Costs a few hundred " +
+                    "tokens where a screenshot costs 1000–2000, and gives exact targets: tap or type into an element by " +
+                    "its number. Prefer it to screenshot for finding and operating things; take a screenshot for " +
+                    "pictures, layout, handwriting, canvases or when the text is missing something.",
+                """{"type":"object","properties":{$AFTER}}""",
+            ),
+            tool(
                 "screenshot",
-                "Take a fresh screenshot of the user's phone screen (the overlay hides itself). Coordinates for every other tool are pixels in the most recent screenshot.",
-                """{"type":"object","properties":{}}""",
+                "Take a fresh screenshot of the user's phone screen (the overlay hides itself). Coordinates for every other tool are pixels in the most recent screenshot. Use detail 'low' when layout is enough.",
+                """{"type":"object","properties":{"detail":$DETAIL}}""",
             ),
             tool(
                 "draw_annotations",
@@ -270,26 +420,29 @@ class PhoneToolbox(
             tool("list_apps", "List the launchable apps on the phone as 'Label (package)'. Requires phone control.", """{"type":"object","properties":{}}"""),
             tool(
                 "open_app",
-                "Open an app by its name (e.g. 'Samsung Notes') or package. Returns a screenshot afterwards. Requires phone control.",
-                """{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""",
-            ),
-            tool("tap", "Tap the screen. Returns a screenshot afterwards. Requires phone control.", """{"type":"object","required":["x","y"],"properties":{"x":$XY,"y":$XY}}"""),
-            tool(
-                "long_press", "Press and hold. Returns a screenshot afterwards. Requires phone control.",
-                """{"type":"object","required":["x","y"],"properties":{"x":$XY,"y":$XY,"duration_ms":{"type":"integer"}}}""",
+                "Open an app by its name (e.g. 'Samsung Notes') or package. $RETURNS_TEXT Requires phone control.",
+                """{"type":"object","required":["name"],"properties":{"name":{"type":"string"},$AFTER}}""",
             ),
             tool(
-                "swipe", "Swipe/scroll from one point to another. Returns a screenshot afterwards. Requires phone control.",
-                """{"type":"object","required":["x1","y1","x2","y2"],"properties":{"x1":$XY,"y1":$XY,"x2":$XY,"y2":$XY,"duration_ms":{"type":"integer"}}}""",
+                "tap", "Tap an element (by number) or a point. $RETURNS_TEXT Requires phone control.",
+                """{"type":"object","properties":{"element":$ELEMENT,"x":$XY,"y":$XY,$AFTER}}""",
+            ),
+            tool(
+                "long_press", "Press and hold an element (by number) or a point. $RETURNS_TEXT Requires phone control.",
+                """{"type":"object","properties":{"element":$ELEMENT,"x":$XY,"y":$XY,"duration_ms":{"type":"integer"},$AFTER}}""",
+            ),
+            tool(
+                "swipe", "Swipe/scroll from one point to another. $RETURNS_TEXT Requires phone control.",
+                """{"type":"object","required":["x1","y1","x2","y2"],"properties":{"x1":$XY,"y1":$XY,"x2":$XY,"y2":$XY,"duration_ms":{"type":"integer"},$AFTER}}""",
             ),
             tool(
                 "draw_strokes",
-                "Draw with a finger in the app on screen (e.g. on a Samsung Notes canvas), like a pen: each stroke is a polyline drawn in one movement, the finger lifts between strokes. Returns a screenshot afterwards. Requires phone control.",
+                "Draw in the app on screen (e.g. on a Samsung Notes canvas) like a pen — with the real stylus when that's set up, else with a finger: each stroke is a polyline drawn in one movement, the pen lifts between strokes. Draw long curves as a few strokes so a part can be fixed alone. Returns a screenshot afterwards. Requires phone control." + PEN_APP_NOTE,
                 """{"type":"object","required":["strokes"],"properties":{"strokes":{"type":"array","items":{"type":"array","items":$POINT}}}}""",
             ),
             tool(
                 "write_handwriting",
-                "Write text by hand into the app on screen (e.g. a Samsung Notes page) as pen strokes, starting with its top-left at (x, y). Use when the app expects drawing rather than typing; for text fields use type_text. Returns a screenshot afterwards. Requires phone control.",
+                "Write text by hand into the app on screen (e.g. a Samsung Notes page) as pen strokes, starting with its top-left at (x, y). Use when the app expects drawing rather than typing; for text fields use type_text. Besides Latin letters with accents, it writes Greek letters (π, α, Δ…), math symbols (± × ÷ · − ≠ ≈ ≤ ≥ √ ∫ ∂ ∞ ° → ∈ ∩ ∪ ⊥ ∠) and superscripts/subscripts (x², a₁); it refuses text with other characters before drawing anything. Returns a screenshot afterwards. Requires phone control." + PEN_APP_NOTE,
                 """{"type":"object","required":["text","x","y"],"properties":{"text":{"type":"string"},"x":$XY,"y":$XY,
                   "letter_height":{"type":"number","description":"capital letter height in screenshot pixels (default 28)"},
                   "max_width":{"type":"number","description":"wrap lines at this width in screenshot pixels"},
@@ -297,12 +450,12 @@ class PhoneToolbox(
             ),
             tool(
                 "type_text",
-                "Type text into the focused text field (tap the field first). Returns a screenshot afterwards. Requires phone control.",
-                """{"type":"object","required":["text"],"properties":{"text":{"type":"string"},"submit":{"type":"boolean","description":"press enter/search afterwards"}}}""",
+                "Type text into a text field: give its element number to tap it first, or type into the focused field. With submit it presses enter/search too — field, text and search in one call. $RETURNS_TEXT Requires phone control.",
+                """{"type":"object","required":["text"],"properties":{"text":{"type":"string"},"element":$ELEMENT,"submit":{"type":"boolean","description":"press enter/search afterwards"},$AFTER}}""",
             ),
             tool(
-                "press_key", "Press a system button. Returns a screenshot afterwards. Requires phone control.",
-                """{"type":"object","required":["key"],"properties":{"key":{"type":"string","enum":["back","home","recents","notifications","quick_settings"]}}}""",
+                "press_key", "Press a system button. $RETURNS_TEXT Requires phone control.",
+                """{"type":"object","required":["key"],"properties":{"key":{"type":"string","enum":["back","home","recents","notifications","quick_settings"]},$AFTER}}""",
             ),
         )
     }
