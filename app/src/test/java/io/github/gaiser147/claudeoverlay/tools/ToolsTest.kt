@@ -18,14 +18,43 @@ import java.io.File
 
 private fun font(name: String) = HersheyFont(File("src/main/assets/hershey/$name.txt").readLines())
 
+/** A small app screen: a search field, a button, a tappable row of plain texts. */
+fun sampleScreen(vararg extra: UiNode) = ScreenSnapshot(
+    app = "Moodle",
+    screen = Box(0, 0, 1000, 2000),
+    roots = listOf(
+        UiNode(
+            bounds = Box(0, 0, 1000, 2000),
+            children = listOf(
+                UiNode(role = "EditText", editable = true, hint = "Kurse durchsuchen", bounds = Box(0, 100, 800, 200)),
+                UiNode(role = "Button", text = "Suchen", clickable = true, bounds = Box(800, 100, 1000, 200)),
+                UiNode(
+                    clickable = true, bounds = Box(0, 300, 1000, 400),
+                    children = listOf(
+                        UiNode(text = "Analysis I", bounds = Box(20, 310, 600, 350)),
+                        UiNode(text = "Abgabe Freitag", bounds = Box(20, 350, 600, 390)),
+                    ),
+                ),
+            ) + extra,
+        ),
+    ),
+)
+
 class FakeHost(var blocked: String? = null) : PhoneHost {
     val log = mutableListOf<String>()
+    /** Screens readScreen returns in turn; the last one stays. */
+    val screens = mutableListOf(sampleScreen())
+    var reads = 0
     val gestures = mutableListOf<List<Stroke>>()
     val strokes: List<Stroke> get() = gestures.flatten()
     var annotations: List<Annotation> = emptyList()
-    override suspend fun screenshot(withDrawings: Boolean) =
+    override suspend fun screenshot(withDrawings: Boolean, maxEdge: Int) =
         Shot(Attachment("s.jpg", "image/jpeg", byteArrayOf(1, 2)), null, 500, 1000).also { log += if (withDrawings) "shot+drawings" else "shot" }
     override fun screenSize() = 1000 to 2000
+    override suspend fun readScreen(): ScreenSnapshot {
+        reads++
+        return if (screens.size > 1) screens.removeAt(0) else screens.single()
+    }
     override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean): Long {
         this.annotations = annotations
         log += "draw"
@@ -41,7 +70,7 @@ class FakeHost(var blocked: String? = null) : PhoneHost {
         return (if (preferStylus && pen == PenState.Ready) InputKind.Stylus else InputKind.Finger).also { lastKind = it }
     }
     override fun penState() = pen
-    override suspend fun typeText(text: String, submit: Boolean) = "Typed ${text.length} characters"
+    override suspend fun typeText(text: String, submit: Boolean) = "Typed ${text.length} characters".also { log += "type $text" }
     override suspend fun pressKey(key: String) = key in setOf("back", "home")
     override fun listApps() = listOf("Samsung Notes" to "com.samsung.android.app.notes", "Chrome" to "com.android.chrome")
     override suspend fun openApp(query: String) = listApps().firstOrNull { it.first.contains(query, true) }?.first
@@ -90,12 +119,62 @@ class PhoneToolboxTest {
     }
 
     @Test
-    fun `tap lands on the mapped point and answers with a screenshot`() = runTest {
+    fun `tap lands on the mapped point and answers with the screen as text, no picture`() = runTest {
         box.call("screenshot", args("{}"))
         val r = box.call("tap", args("""{"x":250,"y":500}"""))
         assertFalse(r.isError)
         assertEquals(Pt(500f, 1000f), host.strokes.single().points.single())
-        assertEquals("image", r.content.last()["type"]!!.jsonPrimitive.content)
+        assertEquals(1, r.content.size)
+        val text = r.content[0]["text"]!!.jsonPrimitive.content
+        assertTrue(text, text.startsWith("Tapped. Screen now:\nApp: Moodle"))
+        assertTrue(text, text.contains("""button "Suchen" @450,75"""))
+    }
+
+    @Test
+    fun `elements are tapped by number, in the screen text's own coordinate space`() = runTest {
+        val read = box.call("read_screen", args("{}")).content[0]["text"]!!.jsonPrimitive.content
+        // No screenshot yet: the space of a tool screenshot of the 1000×2000 screen.
+        assertTrue(read, read.contains("546×1092"))
+        assertTrue(read, read.contains("""[3] button "Analysis I · Abgabe Freitag""""))
+        box.call("tap", args("""{"element":3}"""))
+        assertEquals(Pt(500f, 350f), host.strokes.single().points.single())
+        assertTrue(box.call("tap", args("""{"element":9}""")).isError)
+    }
+
+    @Test
+    fun `type_text with an element taps the field, types and submits in one call`() = runTest {
+        box.call("read_screen", args("{}"))
+        val r = box.call("type_text", args("""{"element":1,"text":"Analysis","submit":true}"""))
+        assertFalse(r.isError)
+        assertEquals(Pt(400f, 150f), host.strokes.single().points.single())
+        assertTrue(host.log.contains("type Analysis"))
+    }
+
+    @Test
+    fun `a screen with little text, or asking for it, adds a screenshot`() = runTest {
+        host.screens[0] = ScreenSnapshot("Paint", listOf(UiNode(bounds = Box(0, 0, 1000, 2000))), Box(0, 0, 1000, 2000))
+        val sparse = box.call("read_screen", args("{}"))
+        assertEquals("image", sparse.content.last()["type"]!!.jsonPrimitive.content)
+        host.screens[0] = sampleScreen()
+        val asked = box.call("read_screen", args("""{"screenshot":true}"""))
+        assertEquals("image", asked.content.last()["type"]!!.jsonPrimitive.content)
+        // The text was renumbered into the screenshot's 500×1000 space.
+        assertTrue(asked.content[0]["text"]!!.jsonPrimitive.content.contains("500×1000"))
+    }
+
+    @Test
+    fun `wait_for keeps reading until the text shows up`() = runTest {
+        host.screens.clear()
+        host.screens += listOf(sampleScreen(), sampleScreen(), sampleScreen(UiNode(text = "Ergebnisse", bounds = Box(0, 500, 500, 560))))
+        val r = box.call("read_screen", args("""{"wait_for":"ergebnisse"}"""))
+        assertTrue(r.content[0]["text"]!!.jsonPrimitive.content.contains("Ergebnisse"))
+    }
+
+    @Test
+    fun `a screenshot sent with a message becomes the coordinate space`() = runTest {
+        box.noteScreenshot(250, 500)
+        box.call("tap", args("""{"x":125,"y":250}"""))
+        assertEquals(Pt(500f, 1000f), host.strokes.single().points.single())
     }
 
     @Test

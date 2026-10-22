@@ -19,7 +19,7 @@ interface ScreenshotSource {
      * Captures the screen as it looks no earlier than [notBeforeNanos] (System.nanoTime), the
      * moment the overlay was hidden, so a frame still showing the overlay is never used.
      */
-    suspend fun capture(notBeforeNanos: Long): Shot?
+    suspend fun capture(notBeforeNanos: Long, maxEdge: Int = ShotEncoder.MAX_EDGE): Shot?
 }
 
 /** What a capture needs from the overlay window. */
@@ -43,11 +43,11 @@ class CaptureSequence(
     private val clock: () -> Long = System::nanoTime,
 ) {
     /** @param keepDrawings leave Claude's drawings in the picture, so it can check them. */
-    suspend fun run(source: ScreenshotSource, keepDrawings: Boolean = false): Shot? {
+    suspend fun run(source: ScreenshotSource, keepDrawings: Boolean = false, maxEdge: Int = ShotEncoder.MAX_EDGE): Shot? {
         window.dismissKeyboard()
         window.setHidden(true, keepDrawings)
         try {
-            return source.capture(clock())
+            return source.capture(clock(), maxEdge)
         } finally {
             window.setHidden(false, keepDrawings)
         }
@@ -59,9 +59,9 @@ object ShotEncoder {
     const val MAX_EDGE = 1568
     const val JPEG_QUALITY = 82
 
-    /** Scales, fingerprints and JPEG-encodes [bitmap]; recycles it. */
-    fun encode(bitmap: Bitmap): Shot {
-        val scale = minOf(1f, MAX_EDGE.toFloat() / max(bitmap.width, bitmap.height))
+    /** Scales (long edge at most [maxEdge]), fingerprints and JPEG-encodes [bitmap]; recycles it. */
+    fun encode(bitmap: Bitmap, maxEdge: Int = MAX_EDGE): Shot {
+        val scale = minOf(1f, maxEdge.toFloat() / max(bitmap.width, bitmap.height))
         val scaled = if (scale < 1f) {
             Bitmap.createScaledBitmap(
                 bitmap, (bitmap.width * scale).roundToInt(), (bitmap.height * scale).roundToInt(), true,

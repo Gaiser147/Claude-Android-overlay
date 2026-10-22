@@ -21,7 +21,7 @@ class CaptureSequenceTest {
     @Test
     fun `keyboard goes first, then the overlay, and the capture is told when it vanished`() = runTest {
         val source = object : ScreenshotSource {
-            override suspend fun capture(notBeforeNanos: Long): Shot? {
+            override suspend fun capture(notBeforeNanos: Long, maxEdge: Int): Shot? {
                 log += "capture after $notBeforeNanos"
                 return Shot(Attachment("s.jpg", "image/jpeg", byteArrayOf(1)), null, 10, 20)
             }
@@ -34,7 +34,7 @@ class CaptureSequenceTest {
     @Test
     fun `a check shot can leave Claude's drawings in the picture`() = runTest {
         val source = object : ScreenshotSource {
-            override suspend fun capture(notBeforeNanos: Long): Shot? = null
+            override suspend fun capture(notBeforeNanos: Long, maxEdge: Int): Shot? = null
         }
         CaptureSequence(window).run(source, keepDrawings = true)
         assertEquals(listOf("keyboard away", "hide (keep drawings)", "show (keep drawings)"), log)
@@ -43,7 +43,7 @@ class CaptureSequenceTest {
     @Test
     fun `the overlay comes back even when the capture fails`() = runTest {
         val source = object : ScreenshotSource {
-            override suspend fun capture(notBeforeNanos: Long): Shot? = error("boom")
+            override suspend fun capture(notBeforeNanos: Long, maxEdge: Int): Shot? = error("boom")
         }
         runCatching { CaptureSequence(window).run(source) }
         assertEquals(listOf("keyboard away", "hide", "show"), log)

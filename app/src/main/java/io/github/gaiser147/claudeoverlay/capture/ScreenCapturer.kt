@@ -62,7 +62,7 @@ class ScreenCapturer(
         )
     }
 
-    override suspend fun capture(notBeforeNanos: Long): Shot? = withContext(Dispatchers.IO) {
+    override suspend fun capture(notBeforeNanos: Long, maxEdge: Int): Shot? = withContext(Dispatchers.IO) {
         ensureOrientation()
         // A frame that arrives within two vsyncs of hiding may have been composed before it.
         val fresh = notBeforeNanos + FRAME_SLACK_NANOS
@@ -73,7 +73,7 @@ class ScreenCapturer(
         }
         // No new frame at all means nothing changed on screen; the latest one is then current.
         val bitmap = synchronized(lock) { latest?.let(::toBitmap) } ?: return@withContext null
-        ShotEncoder.encode(bitmap)
+        ShotEncoder.encode(bitmap, maxEdge)
     }
 
     fun release() {

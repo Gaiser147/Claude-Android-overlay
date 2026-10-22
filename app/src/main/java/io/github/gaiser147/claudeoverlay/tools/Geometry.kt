@@ -1,10 +1,12 @@
 package io.github.gaiser147.claudeoverlay.tools
 
+import kotlin.math.roundToInt
+
 /** A point in screen pixels. */
 data class Pt(val x: Float, val y: Float)
 
 /**
- * Maps between the screenshot Claude saw (scaled to fit 1568 px) and the real screen.
+ * Maps between the latest screenshot Claude saw (scaled down, its size varies) and the real screen.
  * Every tool takes coordinates in screenshot pixels, the space Claude can actually measure in.
  */
 data class ShotGeometry(val imageWidth: Int, val imageHeight: Int, val screenWidth: Int, val screenHeight: Int) {
@@ -15,6 +17,19 @@ data class ShotGeometry(val imageWidth: Int, val imageHeight: Int, val screenWid
         (x * sx).coerceIn(0f, screenWidth - 1f),
         (y * sy).coerceIn(0f, screenHeight - 1f),
     )
+
+    companion object {
+        /** The space a screenshot with long edge [maxEdge] would have. */
+        fun forScreen(screenWidth: Int, screenHeight: Int, maxEdge: Int): ShotGeometry {
+            val scale = minOf(1f, maxEdge.toFloat() / maxOf(screenWidth, screenHeight))
+            return ShotGeometry(
+                (screenWidth * scale).roundToInt(), (screenHeight * scale).roundToInt(), screenWidth, screenHeight,
+            )
+        }
+    }
+
+    /** Screen pixels → screenshot pixels. */
+    fun toImage(p: Pt) = Pt(p.x / sx, p.y / sy)
 
     /** A length (radius, text height) in screenshot pixels → screen pixels. */
     fun toScreenLength(v: Float) = v * (sx + sy) / 2

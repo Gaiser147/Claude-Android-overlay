@@ -7,6 +7,7 @@ import io.github.gaiser147.claudeoverlay.capture.CaptureSequence
 import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
 import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
 import io.github.gaiser147.claudeoverlay.capture.ScreenshotSource
+import io.github.gaiser147.claudeoverlay.capture.ShotEncoder
 import io.github.gaiser147.claudeoverlay.capture.Shot
 import io.github.gaiser147.claudeoverlay.cli.Attachment
 import io.github.gaiser147.claudeoverlay.cli.ChatEvent
@@ -89,6 +90,8 @@ class ChatController(
     mcpConfig: String?,
     /** Called as each new user message goes out (the overlay clears old drawings). */
     private val onNewTurn: () -> Unit,
+    /** A screenshot went out with a message: it's now the one Claude measures coordinates in. */
+    private val onShotSent: (Shot) -> Unit = {},
 ) {
     private val captureSequence = CaptureSequence(captureWindow)
     private val session = ClaudeSession(graph.env, graph.proxy, mcpConfig)
@@ -224,7 +227,7 @@ class ChatController(
     fun setDrawingsShown(shown: Boolean) = _state.update { it.copy(drawingsShown = shown) }
 
     /** A screenshot for the phone tools: always taken, whatever the screenshot toggle says. */
-    suspend fun captureForTools(withDrawings: Boolean = false): Shot? = takeShot(withDrawings)
+    suspend fun captureForTools(withDrawings: Boolean, maxEdge: Int): Shot? = takeShot(withDrawings, maxEdge)
 
     /** Mic button: start dictating, or finish (which sends what was said). */
     fun toggleVoice() {
@@ -282,7 +285,10 @@ class ChatController(
                     screenshotSize = shot?.let { it.width to it.height },
                 )
             }
-            if (shot != null && !unchanged) lastSentFingerprint = shot.fingerprint
+            if (shot != null && !unchanged) {
+                lastSentFingerprint = shot.fingerprint
+                onShotSent(shot)
+            }
             val note = listOfNotNull(
                 when {
                     unchanged -> "🖼 unchanged"
@@ -373,9 +379,9 @@ class ChatController(
         projection = null
     }
 
-    private suspend fun takeShot(withDrawings: Boolean = false): Shot? {
+    private suspend fun takeShot(withDrawings: Boolean = false, maxEdge: Int = ShotEncoder.MAX_EDGE): Shot? {
         val source = screenshotSource() ?: return null
-        return runCatching { captureSequence.run(source, keepDrawings = withDrawings) }.getOrNull()
+        return runCatching { captureSequence.run(source, keepDrawings = withDrawings, maxEdge = maxEdge) }.getOrNull()
     }
 
     private fun onEvent(event: ChatEvent) {
