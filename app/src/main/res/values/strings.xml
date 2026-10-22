@@ -39,4 +39,7 @@
     <string name="input_hint_screen">Ask about your screen…</string>
     <string name="stop">Stop</string>
     <string name="send">Send</string>
+    <string name="model">Model</string>
+    <string name="model_custom">Other model ID (e.g. a specific version)</string>
+    <string name="model_use">Use</string>
 </resources>

@@ -6,6 +6,7 @@ import io.github.gaiser147.claudeoverlay.capture.Shot
 import io.github.gaiser147.claudeoverlay.cli.Attachment
 import io.github.gaiser147.claudeoverlay.cli.ChatEvent
 import io.github.gaiser147.claudeoverlay.cli.ClaudeSession
+import io.github.gaiser147.claudeoverlay.cli.ModelInfo
 import io.github.gaiser147.claudeoverlay.cli.ShotFingerprint
 import io.github.gaiser147.claudeoverlay.cli.UserMessage
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +39,7 @@ data class ChatUiState(
     val items: List<ChatItem> = emptyList(),
     val busy: Boolean = false,
     val model: String = ClaudeSession.DEFAULT_MODEL,
+    val models: List<ModelInfo> = ClaudeSession.FALLBACK_MODELS,
     val servedModel: String? = null,
     val screenshots: Boolean = true,
     val canCapture: Boolean = false,
@@ -74,9 +76,11 @@ class ChatController(
         scope.launch {
             val model = graph.settings.model()
             session.setModel(model)
+            val models = graph.settings.models()
             _state.update {
                 it.copy(
                     model = model,
+                    models = models ?: it.models,
                     screenshots = graph.settings.screenshots(),
                     resumableSession = graph.settings.lastSession(),
                 )
@@ -107,8 +111,10 @@ class ChatController(
     }
 
     fun setModel(model: String) {
+        if (model.isBlank()) return
         session.setModel(model)
-        _state.update { it.copy(model = model) }
+        // Until the CLI confirms (set_model reply / next init), show the choice, not the old model.
+        _state.update { it.copy(model = model, servedModel = null) }
         scope.launch { graph.settings.setModel(model) }
     }
 
@@ -234,6 +240,10 @@ class ChatController(
                 it.copy(status = if (event.isError) ToolStatus.Failed else ToolStatus.Done)
             }
             is ChatEvent.ModelChanged -> _state.update { it.copy(servedModel = event.model) }
+            is ChatEvent.ModelsAvailable -> if (event.models.isNotEmpty()) {
+                _state.update { it.copy(models = event.models) }
+                scope.launch { graph.settings.setModels(event.models) }
+            }
             is ChatEvent.TurnResult -> {
                 if (event.isError && !interrupted) {
                     val text = event.text?.takeIf { it.isNotBlank() } ?: "Claude reported an error (${event.subtype})."

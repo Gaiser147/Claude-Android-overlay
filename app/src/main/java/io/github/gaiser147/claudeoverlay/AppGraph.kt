@@ -11,6 +11,9 @@ import io.github.gaiser147.claudeoverlay.cli.ClaudeSession
 import io.github.gaiser147.claudeoverlay.cli.CliEnvironment
 import io.github.gaiser147.claudeoverlay.cli.CliInstaller
 import io.github.gaiser147.claudeoverlay.cli.LocalProxy
+import io.github.gaiser147.claudeoverlay.cli.ModelInfo
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -39,6 +42,7 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     private val modelKey = stringPreferencesKey("model")
     private val lastSessionKey = stringPreferencesKey("last_session")
     private val screenshotsKey = booleanPreferencesKey("screenshots")
+    private val modelsKey = stringPreferencesKey("models")
 
     val model: Flow<String> = store.data.map { it[modelKey] ?: ClaudeSession.DEFAULT_MODEL }
     val screenshots: Flow<Boolean> = store.data.map { it[screenshotsKey] ?: true }
@@ -46,6 +50,13 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     suspend fun model(): String = model.first()
     suspend fun lastSession(): String? = store.data.first()[lastSessionKey]
     suspend fun screenshots(): Boolean = screenshots.first()
+
+    /** The CLI's model menu as last reported, or null before the first CLI start. */
+    suspend fun models(): List<ModelInfo>? = store.data.first()[modelsKey]?.let { raw ->
+        runCatching { ModelInfo.parseList(Json.parseToJsonElement(raw).jsonArray) }.getOrNull()
+    }
+
+    suspend fun setModels(models: List<ModelInfo>) = store.edit { it[modelsKey] = ModelInfo.toJson(models) }
 
     suspend fun setModel(value: String) = store.edit { it[modelKey] = value }
     suspend fun setScreenshots(value: Boolean) = store.edit { it[screenshotsKey] = value }

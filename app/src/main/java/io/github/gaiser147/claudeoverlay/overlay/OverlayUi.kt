@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -48,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,8 +72,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.model.State
+import com.mikepenz.markdown.model.rememberMarkdownState
 import io.github.gaiser147.claudeoverlay.R
-import io.github.gaiser147.claudeoverlay.cli.ClaudeSession
+import io.github.gaiser147.claudeoverlay.cli.ModelInfo
 import io.github.gaiser147.claudeoverlay.ui.theme.LocalOverlayColors
 
 /** Window-level actions the Compose UI can't do itself (it doesn't own the WindowManager). */
@@ -126,10 +131,12 @@ fun ChatPanel(state: ChatUiState, controller: ChatController, actions: OverlayWi
             .background(c.bg)
             .border(1.dp, c.border, RoundedCornerShape(16.dp)),
     ) {
-        Header(state, controller, actions)
+        var picker by remember { mutableStateOf(false) }
+        Header(state, controller, actions, onPickModel = { picker = !picker })
         HorizontalDivider(color = c.border)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             Transcript(state, controller)
+            if (picker) ModelPicker(state, onPick = { controller.setModel(it); picker = false })
         }
         if (state.needsLogin) LoginBanner(controller, actions)
         Composer(state, controller, actions)
@@ -137,9 +144,13 @@ fun ChatPanel(state: ChatUiState, controller: ChatController, actions: OverlayWi
 }
 
 @Composable
-private fun Header(state: ChatUiState, controller: ChatController, actions: OverlayWindowActions) {
+private fun Header(
+    state: ChatUiState,
+    controller: ChatController,
+    actions: OverlayWindowActions,
+    onPickModel: () -> Unit,
+) {
     val c = LocalOverlayColors.current
-    var modelMenu by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     Row(
         Modifier
@@ -150,26 +161,16 @@ private fun Header(state: ChatUiState, controller: ChatController, actions: Over
     ) {
         Text("✳", color = c.accent, fontSize = 18.sp)
         Spacer(Modifier.width(6.dp))
-        Box {
-            Row(
-                Modifier.clip(RoundedCornerShape(8.dp)).clickable { modelMenu = true }.padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    state.servedModel ?: ClaudeSession.MODELS.firstOrNull { it.second == state.model }?.first ?: state.model,
-                    color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                Icon(Icons.Default.KeyboardArrowDown, null, tint = c.muted, modifier = Modifier.size(16.dp))
-            }
-            DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                ClaudeSession.MODELS.forEach { (label, alias) ->
-                    DropdownMenuItem(
-                        text = { Text(label + if (alias == state.model) "  ✓" else "") },
-                        onClick = { modelMenu = false; controller.setModel(alias) },
-                    )
-                }
-            }
+        Row(
+            Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onPickModel).padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                ModelInfo.label(state.models, state.servedModel ?: state.model),
+                color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Icon(Icons.Default.KeyboardArrowDown, null, tint = c.muted, modifier = Modifier.size(16.dp))
         }
         if (state.contextTokens > 0) {
             Text("${state.contextTokens / 1000}k", color = c.faint, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
@@ -199,15 +200,94 @@ private fun Header(state: ChatUiState, controller: ChatController, actions: Over
     }
 }
 
+/**
+ * The model menu, laid over the transcript: the CLI's own list for this login, each with its
+ * current version and concrete id, plus a field for any other model id (e.g. a pinned older
+ * version). An in-panel sheet rather than a popup, so the id field can take the keyboard.
+ */
+@Composable
+private fun ModelPicker(state: ChatUiState, onPick: (String) -> Unit) {
+    val c = LocalOverlayColors.current
+    var custom by rememberSaveable { mutableStateOf("") }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.bg)
+            .verticalScroll(rememberScrollState())
+            .padding(8.dp),
+    ) {
+        Text(
+            stringResource(R.string.model), color = c.muted, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+        )
+        state.models.forEach { m ->
+            val selected = m.value == state.model
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (selected) c.toolBg else c.bg)
+                    .clickable { onPick(m.value) }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(m.title, color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        if (m.displayName != m.title && m.value == "default") {
+                            Text("  · ${m.displayName}", color = c.muted, fontSize = 12.sp)
+                        }
+                    }
+                    m.resolvedModel?.let {
+                        Text(it, color = c.faint, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    }
+                    if (m.subtitle.isNotEmpty()) Text(m.subtitle, color = c.muted, fontSize = 12.sp)
+                }
+                if (selected) Icon(Icons.Default.Check, null, tint = c.accent, modifier = Modifier.size(18.dp))
+            }
+        }
+        Spacer(Modifier.size(8.dp))
+        Text(
+            stringResource(R.string.model_custom), color = c.muted, fontSize = 12.sp,
+            modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+            BasicTextField(
+                value = custom,
+                onValueChange = { custom = it.trim() },
+                singleLine = true,
+                textStyle = TextStyle(color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+                cursorBrush = SolidColor(c.accent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onPick(custom) }),
+                decorationBox = { inner ->
+                    Box(
+                        Modifier.clip(RoundedCornerShape(8.dp)).background(c.field)
+                            .border(1.dp, c.border, RoundedCornerShape(8.dp)).padding(8.dp),
+                    ) {
+                        if (custom.isEmpty()) Text("claude-opus-4-8", color = c.faint, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                        inner()
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { onPick(custom) }, enabled = custom.isNotEmpty()) {
+                Text(stringResource(R.string.model_use))
+            }
+        }
+    }
+}
+
 @Composable
 private fun Transcript(state: ChatUiState, controller: ChatController) {
     val c = LocalOverlayColors.current
     val list = rememberLazyListState()
-    // Follow the stream while the reader is at the bottom; leave them alone if they scrolled up.
-    val lastText = (state.items.lastOrNull() as? ChatItem.Assistant)?.text?.length ?: 0
-    LaunchedEffect(state.items.size, lastText) {
-        val atBottom = !list.canScrollForward || list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 >= state.items.size - 2
-        if (atBottom && state.items.isNotEmpty()) list.scrollToItem(state.items.size - 1, Int.MAX_VALUE / 2)
+    // The list is laid out bottom-up (reverseLayout), so the newest item is index 0 and stays
+    // pinned to the bottom edge while it grows: following the stream needs no scrolling at all,
+    // and a reader who scrolled up keeps their place. Only a new message of our own jumps down.
+    val newestIsUser = state.items.lastOrNull() is ChatItem.User
+    LaunchedEffect(state.items.size) {
+        if (newestIsUser) list.scrollToItem(0)
     }
     if (state.items.isEmpty()) {
         Column(
@@ -228,15 +308,17 @@ private fun Transcript(state: ChatUiState, controller: ChatController) {
     LazyColumn(
         state = list,
         modifier = Modifier.fillMaxSize(),
+        reverseLayout = true,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
     ) {
-        items(state.items, key = { it.key }) { item ->
+        if (state.busy && state.items.lastOrNull() !is ChatItem.Assistant) {
+            item(key = "thinking") { Text("…", color = c.muted, fontSize = 18.sp) }
+        }
+        items(state.items.asReversed(), key = { it.key }) { item ->
             when (item) {
                 is ChatItem.User -> UserCard(item)
-                is ChatItem.Assistant -> SelectionContainer {
-                    Markdown(content = item.text, modifier = Modifier.fillMaxWidth())
-                }
+                is ChatItem.Assistant -> SelectionContainer { StreamingMarkdown(item.text) }
                 is ChatItem.Tool -> ToolChip(item)
                 is ChatItem.Notice -> Text(
                     item.text,
@@ -246,10 +328,24 @@ private fun Transcript(state: ChatUiState, controller: ChatController) {
                 )
             }
         }
-        if (state.busy && state.items.lastOrNull() !is ChatItem.Assistant) {
-            item(key = "thinking") { Text("…", color = c.muted, fontSize = 18.sp) }
-        }
     }
+}
+
+/**
+ * Markdown that never blanks out while the text grows. The renderer re-parses on every change
+ * and passes through a Loading state in between; drawn as-is, every streamed token flashed the
+ * whole reply. So only Success states are drawn, and the previous one stays up until the next
+ * parse is done (plain text until the very first one is).
+ */
+@Composable
+private fun StreamingMarkdown(text: String) {
+    val parsed by rememberMarkdownState(text, immediate = true).state.collectAsState()
+    // A plain holder, not snapshot state: `parsed` changing already recomposes this.
+    val lastSuccess = remember { arrayOfNulls<State.Success>(1) }
+    (parsed as? State.Success)?.let { lastSuccess[0] = it }
+    val ready = lastSuccess[0]
+    if (ready != null) Markdown(ready, modifier = Modifier.fillMaxWidth())
+    else Text(text, color = LocalOverlayColors.current.text, fontSize = 14.sp, modifier = Modifier.fillMaxWidth())
 }
 
 @Composable

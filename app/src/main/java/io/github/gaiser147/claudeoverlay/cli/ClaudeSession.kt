@@ -57,6 +57,9 @@ class ClaudeSession(
         val p = env.processBuilder(args, proxy).start()
         process = p
         stdin = p.outputStream.bufferedWriter()
+        // Ask for the CLI's model menu (entitled models with their current versions) up front,
+        // so the picker is filled before the first message.
+        control { put("subtype", "initialize") }
         val parser = StreamJsonParser()
         val stderr = ArrayDeque<String>()
         thread(name = "claude-stderr", isDaemon = true) {
@@ -131,12 +134,10 @@ class ClaudeSession(
     companion object {
         const val DEFAULT_MODEL = "opus"
 
-        /** The model menu, as in the desktop overlay's config.MODELS. */
-        val MODELS = listOf(
-            "Opus" to "opus", "Opus (1M)" to "opus[1m]",
-            "Fable" to "fable", "Fable (1M)" to "fable[1m]",
-            "Sonnet" to "sonnet", "Haiku" to "haiku",
-        )
+        /** Shown until the CLI has reported its own menu once (then that list is cached). */
+        val FALLBACK_MODELS = listOf("opus", "fable", "sonnet", "haiku").map {
+            ModelInfo(it, null, it.replaceFirstChar(Char::uppercase), "")
+        }
 
         /** Android counterpart of the desktop overlay's config.SYSTEM_APPEND. */
         val SYSTEM_APPEND = """

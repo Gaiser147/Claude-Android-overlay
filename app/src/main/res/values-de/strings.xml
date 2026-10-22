@@ -38,4 +38,7 @@
     <string name="input_hint_screen">Frag nach deinem Bildschirm…</string>
     <string name="stop">Stopp</string>
     <string name="send">Senden</string>
+    <string name="model">Modell</string>
+    <string name="model_custom">Andere Modell-ID (z. B. eine bestimmte Version)</string>
+    <string name="model_use">Verwenden</string>
 </resources>

@@ -26,6 +26,8 @@ sealed interface ChatEvent {
         val costUsd: Double?,
     ) : ChatEvent
     data class ModelChanged(val model: String) : ChatEvent
+    /** The CLI's model menu for this login, from its `initialize` response. */
+    data class ModelsAvailable(val models: List<ModelInfo>) : ChatEvent
     data class ProcessExited(val code: Int, val stderrTail: String) : ChatEvent
 }
 
@@ -122,6 +124,9 @@ class StreamJsonParser {
 
     private fun controlResponse(root: JsonObject): List<ChatEvent> {
         val response = root.obj("response")?.obj("response") ?: return emptyList()
+        (response["models"] as? JsonArray)?.let { models ->
+            return listOf(ChatEvent.ModelsAvailable(ModelInfo.parseList(models)))
+        }
         return response.str("model")?.let { listOf(ChatEvent.ModelChanged(it)) } ?: emptyList()
     }
 
