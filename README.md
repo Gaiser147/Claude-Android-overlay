@@ -17,7 +17,9 @@ deinem **eigenen Claude-Abo, ohne API-Key und ohne Termux**.
 - **Echter Claude-Code-Agent:** Streaming-Antworten mit Markdown, Tool-Chips (Bash, Read,
   WebFetch …), Stopp-Knopf.
 - **Modellwahl mit Versionen:** Die Liste kommt direkt von der CLI (nur Modelle, die dein Abo
-  hat), z. B. „Opus 5.5 · claude-opus-5-5“; dazu ein Feld für jede andere Modell-ID.
+  hat), z. B. „Opus 5.5 · claude-opus-5-5“; dazu ein Feld für jede andere Modell-ID. Darunter
+  der **Effort** (Auto, Niedrig … Max – nur die Stufen, die das Modell kann); er gilt ab der
+  nächsten Nachricht, ohne Neustart, und steht neben dem Modellnamen.
 - **Sprechen statt tippen:** Mikrofon-Knopf (oder Kugel lange drücken) → Sprache wird live
   erkannt und abgeschickt; die Antwort wird schon während des Schreibens vorgelesen.
 - **Claude zeigt auf deinen Bildschirm** – wie ein Tutor mit Stift: gebogene Pfeile, umkreisen,
@@ -156,9 +158,9 @@ erzeugen mit `scripts/fetch-native-deps.sh` (lädt gepinnte Alpine-Pakete, prüf
 ## Manuelle Testliste (Gerät)
 
 Einrichtung → CLI-Download → Login → Kugel erscheint → Frage mit Screenshot (Overlay und
-Tastatur sind nicht im Bild) → Antwort streamt ohne Flackern → Modell-Auswahl zeigt Versionen →
+Tastatur sind nicht im Bild) → Antwort streamt ohne Flackern → Modell-Auswahl zeigt Versionen, Effort „Hoch“ steht im Kopf →
 Mikrofon: sprechen, Antwort wird vorgelesen → „Markiere, wo ich tippen muss“ zeichnet einen Pfeil →
-Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“ (ohne und mit Shizuku:
+Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“, dann „Zeichne sin(x) von 0 bis 2π mit Beschriftung“ (π, ², kein „?“) (ohne und mit Shizuku:
 mit Shizuku erscheint Tinte mit Druckverlauf, das Blatt verschiebt sich nicht) → Stopp während einer Antwort →
 App neu starten → „Letzte Unterhaltung fortsetzen“.
 

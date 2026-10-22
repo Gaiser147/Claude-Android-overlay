@@ -20,6 +20,8 @@ data class ModelInfo(
     val displayName: String,
     /** e.g. "Opus 5.5 · Best for everyday, complex tasks". */
     val description: String,
+    /** Effort levels the model takes, lowest first (e.g. low … max); empty if none. */
+    val effortLevels: List<String> = emptyList(),
 ) {
     /** "Opus 5.5": the versioned name leads the CLI's description. */
     val title: String
@@ -40,6 +42,10 @@ data class ModelInfo(
                 resolvedModel = o.str("resolvedModel"),
                 displayName = o.str("displayName") ?: value,
                 description = o.str("description") ?: "",
+                effortLevels = (o["supportedEffortLevels"] as? JsonArray).orEmpty()
+                    .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+                    .takeIf { (o["supportsEffort"] as? JsonPrimitive)?.content != "false" }
+                    .orEmpty(),
             )
         }
 
@@ -50,6 +56,10 @@ data class ModelInfo(
                     m.resolvedModel?.let { put("resolvedModel", it) }
                     put("displayName", m.displayName)
                     put("description", m.description)
+                    if (m.effortLevels.isNotEmpty()) {
+                        put("supportsEffort", true)
+                        put("supportedEffortLevels", buildJsonArray { m.effortLevels.forEach { add(it) } })
+                    }
                 })
             }
         }.toString()
@@ -62,6 +72,18 @@ data class ModelInfo(
             models.firstOrNull { it.value == model }?.title
                 ?: models.firstOrNull { it.resolvedModel == model }?.title
                 ?: model
+
+        /** What the CLI offers when it hasn't said what a model takes (e.g. a custom model id). */
+        val DEFAULT_EFFORT_LEVELS = listOf("low", "medium", "high")
+
+        /**
+         * The effort levels to offer for [model] (by alias or concrete id): what the CLI
+         * reported, none for a model without effort, the basic three for an id it didn't list.
+         */
+        fun effortLevels(models: List<ModelInfo>, model: String): List<String> =
+            (models.firstOrNull { it.value == model } ?: models.firstOrNull { it.resolvedModel == model })
+                ?.effortLevels
+                ?: DEFAULT_EFFORT_LEVELS
 
         private fun JsonObject.str(key: String) =
             (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content

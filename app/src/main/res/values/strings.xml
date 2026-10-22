@@ -70,4 +70,13 @@
     <string name="stylus_install">Install Shizuku</string>
     <string name="stylus_start_hint">Open Shizuku and start it with “Wireless debugging” (follow its pairing steps once), then come back here.</string>
     <string name="stylus_open">Open Shizuku</string>
+    <string name="effort">Effort</string>
+    <string name="effort_auto">Auto</string>
+    <string name="effort_low">Low</string>
+    <string name="effort_medium">Medium</string>
+    <string name="effort_high">High</string>
+    <string name="effort_xhigh">Extra high</string>
+    <string name="effort_max">Max</string>
+    <string name="effort_hint">More effort: Claude thinks longer and more thoroughly, but answers more slowly and uses more of your plan\'s limits. Auto uses the model\'s default.</string>
+    <string name="effort_capped">%1$s isn\'t available for this model; Claude uses the closest level.</string>
 </resources>

@@ -33,6 +33,9 @@ class ClaudeSession(
         private set
     @Volatile var model: String = DEFAULT_MODEL
         private set
+    /** Reasoning effort (low … max), or null for the model's default. */
+    @Volatile var effort: String? = null
+        private set
 
     private var process: Process? = null
     private var stdin: BufferedWriter? = null
@@ -59,6 +62,7 @@ class ClaudeSession(
             addAll(listOf("-p", "--input-format", "stream-json", "--output-format", "stream-json"))
             addAll(listOf("--verbose", "--include-partial-messages"))
             addAll(listOf("--model", model, "--permission-mode", "bypassPermissions"))
+            effort?.let { addAll(listOf("--effort", it)) }
             addAll(listOf("--append-system-prompt", SYSTEM_APPEND))
             // No interactive question UI here; the model asks inline instead (config.DISALLOWED_TOOLS).
             addAll(listOf("--disallowedTools", "AskUserQuestion"))
@@ -120,6 +124,18 @@ class ClaudeSession(
         if (process?.isAlive == true) control { put("subtype", "set_model"); put("model", model) }
     }
 
+    /**
+     * Sets the reasoning effort ([level] null: the model's default); takes effect from the
+     * next turn. The CLI caps it at what the current model supports.
+     */
+    fun setEffort(level: String?) = synchronized(lock) {
+        effort = level
+        if (process?.isAlive == true) control {
+            put("subtype", "apply_flag_settings")
+            putJsonObject("settings") { put("effortLevel", level) }
+        }
+    }
+
     fun stop() = synchronized(lock) { stopLocked() }
 
     /**
@@ -165,7 +181,7 @@ class ClaudeSession(
 
         /** Shown until the CLI has reported its own menu once (then that list is cached). */
         val FALLBACK_MODELS = listOf("opus", "fable", "sonnet", "haiku").map {
-            ModelInfo(it, null, it.replaceFirstChar(Char::uppercase), "")
+            ModelInfo(it, null, it.replaceFirstChar(Char::uppercase), "", ModelInfo.DEFAULT_EFFORT_LEVELS)
         }
 
         /** Android counterpart of the desktop overlay's config.SYSTEM_APPEND. */

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -146,7 +147,7 @@ fun ChatPanel(state: ChatUiState, controller: ChatController, actions: OverlayWi
         HorizontalDivider(color = c.border)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             Transcript(state, controller)
-            if (picker) ModelPicker(state, onPick = { controller.setModel(it); picker = false })
+            if (picker) ModelPicker(state, onPick = { controller.setModel(it); picker = false }, onEffort = controller::setEffort)
         }
         if (state.needsLogin) LoginBanner(controller, actions)
         Composer(state, controller, actions)
@@ -180,6 +181,9 @@ private fun Header(
                 color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
+            state.effort?.let {
+                Text(" · ${effortLabel(it)}", color = c.muted, fontSize = 12.sp, maxLines = 1)
+            }
             Icon(Icons.Default.KeyboardArrowDown, null, tint = c.muted, modifier = Modifier.size(16.dp))
         }
         if (state.contextTokens > 0) {
@@ -234,13 +238,25 @@ private fun Header(
     }
 }
 
+@Composable
+private fun effortLabel(level: String?): String = when (level) {
+    null -> stringResource(R.string.effort_auto)
+    "low" -> stringResource(R.string.effort_low)
+    "medium" -> stringResource(R.string.effort_medium)
+    "high" -> stringResource(R.string.effort_high)
+    "xhigh" -> stringResource(R.string.effort_xhigh)
+    "max" -> stringResource(R.string.effort_max)
+    else -> level
+}
+
 /**
  * The model menu, laid over the transcript: the CLI's own list for this login, each with its
- * current version and concrete id, plus a field for any other model id (e.g. a pinned older
- * version). An in-panel sheet rather than a popup, so the id field can take the keyboard.
+ * current version and concrete id, the reasoning effort the chosen model takes, plus a field
+ * for any other model id (e.g. a pinned older version). An in-panel sheet rather than a popup,
+ * so the id field can take the keyboard.
  */
 @Composable
-private fun ModelPicker(state: ChatUiState, onPick: (String) -> Unit) {
+private fun ModelPicker(state: ChatUiState, onPick: (String) -> Unit, onEffort: (String?) -> Unit) {
     val c = LocalOverlayColors.current
     var custom by rememberSaveable { mutableStateOf("") }
     Column(
@@ -280,6 +296,7 @@ private fun ModelPicker(state: ChatUiState, onPick: (String) -> Unit) {
                 if (selected) Icon(Icons.Default.Check, null, tint = c.accent, modifier = Modifier.size(18.dp))
             }
         }
+        EffortChooser(state, onEffort)
         Spacer(Modifier.size(8.dp))
         Text(
             stringResource(R.string.model_custom), color = c.muted, fontSize = 12.sp,
@@ -310,6 +327,49 @@ private fun ModelPicker(state: ChatUiState, onPick: (String) -> Unit) {
             }
         }
     }
+}
+
+/** Effort chips for the chosen model: Auto (its default) and the levels it takes. */
+@Composable
+private fun EffortChooser(state: ChatUiState, onEffort: (String?) -> Unit) {
+    val c = LocalOverlayColors.current
+    val levels = ModelInfo.effortLevels(state.models, state.model)
+    if (levels.isEmpty()) return
+    Spacer(Modifier.size(8.dp))
+    Text(
+        stringResource(R.string.effort), color = c.muted, fontSize = 12.sp,
+        modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+    )
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        (listOf<String?>(null) + levels).forEach { level ->
+            val selected = level == state.effort
+            Text(
+                effortLabel(level),
+                color = if (selected) c.text else c.muted, fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (selected) c.toolBg else c.bg)
+                    .border(1.dp, if (selected) c.accent else c.border, RoundedCornerShape(16.dp))
+                    .clickable { onEffort(level) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+    // A level the chosen model doesn't take: the CLI uses the nearest one it does.
+    state.effort?.takeIf { it !in levels }?.let {
+        Text(
+            stringResource(R.string.effort_capped, effortLabel(it)), color = c.faint, fontSize = 11.sp,
+            modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+        )
+    }
+    Text(
+        stringResource(R.string.effort_hint), color = c.faint, fontSize = 11.sp,
+        modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+    )
 }
 
 @Composable

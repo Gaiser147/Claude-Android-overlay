@@ -49,6 +49,8 @@ data class ChatUiState(
     val model: String = ClaudeSession.DEFAULT_MODEL,
     val models: List<ModelInfo> = ClaudeSession.FALLBACK_MODELS,
     val servedModel: String? = null,
+    /** Reasoning effort, or null for the model's default. */
+    val effort: String? = null,
     val screenshots: Boolean = true,
     val canCapture: Boolean = false,
     val pendingFiles: List<String> = emptyList(),
@@ -115,10 +117,13 @@ class ChatController(
         scope.launch {
             val model = graph.settings.model()
             session.setModel(model)
+            val effort = graph.settings.effort()
+            session.setEffort(effort)
             val models = graph.settings.models()
             _state.update {
                 it.copy(
                     model = model,
+                    effort = effort,
                     models = models ?: it.models,
                     screenshots = graph.settings.screenshots(),
                     resumableSession = graph.settings.lastSession(),
@@ -177,6 +182,12 @@ class ChatController(
         // Until the CLI confirms (set_model reply / next init), show the choice, not the old model.
         _state.update { it.copy(model = model, servedModel = null) }
         scope.launch { graph.settings.setModel(model) }
+    }
+
+    fun setEffort(level: String?) {
+        session.setEffort(level)
+        _state.update { it.copy(effort = level) }
+        scope.launch { graph.settings.setEffort(level) }
     }
 
     fun addFiles(files: List<Attachment>) {

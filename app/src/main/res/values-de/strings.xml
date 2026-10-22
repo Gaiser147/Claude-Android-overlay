@@ -68,4 +68,13 @@
     <string name="stylus_install">Shizuku installieren</string>
     <string name="stylus_start_hint">Shizuku öffnen und über „Drahtloses Debugging“ starten (einmalig den Kopplungsschritten folgen), dann hierher zurückkehren.</string>
     <string name="stylus_open">Shizuku öffnen</string>
+    <string name="effort">Effort</string>
+    <string name="effort_auto">Auto</string>
+    <string name="effort_low">Niedrig</string>
+    <string name="effort_medium">Mittel</string>
+    <string name="effort_high">Hoch</string>
+    <string name="effort_xhigh">Sehr hoch</string>
+    <string name="effort_max">Max</string>
+    <string name="effort_hint">Mehr Effort: Claude denkt länger und gründlicher nach, antwortet aber langsamer und verbraucht mehr von deinem Kontingent. Auto nutzt die Standardstufe des Modells.</string>
+    <string name="effort_capped">%1$s gibt es für dieses Modell nicht; Claude nutzt die nächstliegende Stufe.</string>
 </resources>
