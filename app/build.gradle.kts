@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Release signing and version come from the environment (the release workflow sets them from
+// repository secrets and the run number); local release builds stay unsigned.
+val releaseKeystore: String? = System.getenv("RELEASE_KEYSTORE")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "io.github.gaiser147.claudeoverlay"
     compileSdk = 35
@@ -13,16 +17,28 @@ android {
         applicationId = "io.github.gaiser147.claudeoverlay"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("VERSION_NAME") ?: "0.1.0"
 
         // The Claude Code CLI only ships for linux-arm64 (and x64); every bundled helper in
         // jniLibs is aarch64 too.
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
