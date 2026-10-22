@@ -22,6 +22,8 @@ import kotlin.concurrent.thread
 class ClaudeSession(
     private val env: CliEnvironment,
     private val proxy: LocalProxy,
+    /** `--mcp-config` for the app's own tool server (drawing on and operating the phone). */
+    private val mcpConfig: String? = null,
 ) {
     private val channel = Channel<ChatEvent>(Channel.UNLIMITED)
     val events: Flow<ChatEvent> = channel.receiveAsFlow()
@@ -50,8 +52,9 @@ class ClaudeSession(
             addAll(listOf("--append-system-prompt", SYSTEM_APPEND))
             // No interactive question UI here; the model asks inline instead (config.DISALLOWED_TOOLS).
             addAll(listOf("--disallowedTools", "AskUserQuestion"))
-            // Only MCP servers declared here (none), not every one in the user's config.
+            // Only the MCP servers declared here (the app's own), not every one in the user's config.
             add("--strict-mcp-config")
+            if (mcpConfig != null) addAll(listOf("--mcp-config", mcpConfig))
             if (resume != null) addAll(listOf("--resume", resume))
         }
         val p = env.processBuilder(args, proxy).start()
@@ -144,7 +147,9 @@ class ClaudeSession(
             You are running as a floating overlay assistant on top of whatever app the user has open on their Android phone. The user talks to you without leaving their current app. Messages may include a live screenshot of the phone screen, attached directly as an image. Use it to see what the user is looking at, then help.
             Keep replies concise and skimmable since they render in a small floating window on a phone; expand only when asked.
             If you need to ask the user something, ask it inline as plain text and wait for their typed reply. This overlay is a plain chat with no interactive question UI, so never use a structured multiple-choice question tool.
-            Your shell is bash inside this app's private Android sandbox, without root. Only Android's toybox utilities are installed (ls, cat, grep, find, sed and similar; no curl, git, python or package manager). You cannot see or operate other apps except through the screenshots you are sent. Your working directory is a private scratch folder; use WebFetch and WebSearch for anything online.
+            Your shell is bash inside this app's private Android sandbox, without root. Only Android's toybox utilities are installed (ls, cat, grep, find, sed and similar; no curl, git, python or package manager). Your working directory is a private scratch folder; use WebFetch and WebSearch for anything online.
+            The phone tools (mcp__phone__*) work on the user's real screen. Coordinates are always pixels in the most recent screenshot, whose size is stated with it. Use draw_annotations to point things out visually (arrows, boxes, circles, highlights, short labels) when showing beats describing — e.g. where to tap, which part of a document or homework task you mean, or marking mistakes; keep drawings few and clear, and clear them when they're no longer relevant.
+            If the user has switched on phone control you can also open apps, tap, swipe, type, draw with strokes and write by hand (write_handwriting, e.g. into Samsung Notes). Work like a careful person: look at the screenshot each action returns before the next step, and stop to ask before anything irreversible or outward-facing (sending messages, posting, purchases, deleting, changing settings). If a control tool reports that control is off, tell the user how to enable it instead of retrying.
         """.trimIndent().replace("\n", " ")
     }
 }

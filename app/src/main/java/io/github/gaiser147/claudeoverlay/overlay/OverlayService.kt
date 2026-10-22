@@ -40,6 +40,15 @@ import io.github.gaiser147.claudeoverlay.AppGraph
 import io.github.gaiser147.claudeoverlay.MainActivity
 import io.github.gaiser147.claudeoverlay.R
 import io.github.gaiser147.claudeoverlay.capture.CaptureWindow
+import io.github.gaiser147.claudeoverlay.access.ControlService
+import io.github.gaiser147.claudeoverlay.capture.Shot
+import io.github.gaiser147.claudeoverlay.tools.Annotation
+import io.github.gaiser147.claudeoverlay.tools.HersheyFont
+import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
+import io.github.gaiser147.claudeoverlay.tools.PhoneHost
+import io.github.gaiser147.claudeoverlay.tools.PhoneToolbox
+import io.github.gaiser147.claudeoverlay.tools.Stroke
+import io.github.gaiser147.claudeoverlay.capture.screenSize as physicalScreenSize
 import io.github.gaiser147.claudeoverlay.capture.ScreenCapturer
 import io.github.gaiser147.claudeoverlay.ui.theme.ClaudeOverlayTheme
 import io.github.gaiser147.claudeoverlay.voice.Speaker
@@ -63,6 +72,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     private lateinit var params: WindowManager.LayoutParams
     lateinit var controller: ChatController
         private set
+    private lateinit var annotations: AnnotationLayer
+    private lateinit var mcp: McpHttpServer
 
     /** A MediaProjection is live, so the foreground service must keep its mediaProjection type. */
     private var projectionActive = false
@@ -80,7 +91,15 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         super.onCreate()
         current = this
         wm = getSystemService(WindowManager::class.java)
-        controller = ChatController(AppGraph.get(this), lifecycleScope, captureWindow, VoiceInput(this), Speaker(this))
+        annotations = AnnotationLayer(this, this)
+        mcp = McpHttpServer(
+            PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
+        )
+        controller = ChatController(
+            AppGraph.get(this), lifecycleScope, captureWindow, VoiceInput(this), Speaker(this),
+            mcpConfig = mcp.cliConfig("phone"),
+            onNewTurn = ::clearDrawings,
+        )
         val (sw, sh) = screenSize()
         bubbleX = sw - dp(BUBBLE_DP) - dp(8)
         bubbleY = (sh * 0.35f).roundToInt()
@@ -128,6 +147,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
 
     override fun onDestroy() {
         controller.close()
+        mcp.close()
+        annotations.clear()
         runCatching { wm.removeView(root) }
         if (current === this) current = null
         super.onDestroy()
@@ -251,9 +272,100 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             root.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
             params.alpha = if (hidden) 0f else 1f
             update()
-            Unit
+            annotations.setHidden(hidden)
         }
     }
+
+    // ── Claude's phone tools ────────────────────────────────────────────────────────────────
+
+    override fun clearDrawings() {
+        annotations.clear()
+        controller.setDrawingsShown(false)
+    }
+
+    /**
+     * Out of the way of a gesture: invisible and untouchable, so the touch reaches the app
+     * below (and Android doesn't treat our window as obscuring it).
+     */
+    private suspend fun stepAside(aside: Boolean) = withContext(Dispatchers.Main) {
+        params.alpha = if (aside) 0f else 1f
+        params.flags = if (aside) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        update()
+        annotations.setHidden(aside)
+        if (aside) delay(INPUT_SETTLE_MS)
+    }
+
+    private val phoneHost = object : PhoneHost {
+        override suspend fun screenshot(): Shot? = controller.captureForTools()
+
+        override fun screenSize(): Pair<Int, Int> = physicalScreenSize(this@OverlayService)
+
+        override suspend fun showAnnotations(annotations: List<Annotation>, clearPrevious: Boolean) =
+            withContext(Dispatchers.Main) {
+                this@OverlayService.annotations.show(annotations, clearPrevious)
+                controller.setDrawingsShown(true)
+            }
+
+        override suspend fun clearAnnotations() = withContext(Dispatchers.Main) { clearDrawings() }
+
+        override fun controlBlockedReason(): String? = when {
+            ControlService.instance.value == null ->
+                "Phone control is unavailable: the Claude Overlay accessibility service is off. " +
+                    "The user can turn it on in the app's setup (step 6)."
+            !controller.state.value.controlAllowed ->
+                "Phone control is switched off. The user can allow it in the overlay's ⋮ menu " +
+                    "(\"Let Claude operate the phone\")."
+            else -> null
+        }
+
+        override suspend fun gesture(strokes: List<Stroke>): Boolean {
+            val service = ControlService.instance.value ?: return false
+            // Let the user watch Claude work instead of the panel covering the app.
+            withContext(Dispatchers.Main) { collapse() }
+            stepAside(true)
+            return try {
+                service.perform(strokes)
+            } finally {
+                stepAside(false)
+            }
+        }
+
+        override suspend fun typeText(text: String, submit: Boolean): String {
+            val service = ControlService.instance.value ?: return "Phone control is unavailable."
+            // Our own text field must not be the one holding input focus.
+            withContext(Dispatchers.Main) { collapse() }
+            delay(INPUT_SETTLE_MS)
+            return withContext(Dispatchers.Main) { service.typeText(text, submit) }
+        }
+
+        override suspend fun pressKey(key: String): Boolean =
+            withContext(Dispatchers.Main) { ControlService.instance.value?.pressKey(key) ?: false }
+
+        override fun listApps(): List<Pair<String, String>> = launcherApps().map { it.first to it.second }
+
+        override suspend fun openApp(query: String): String? = withContext(Dispatchers.Main) {
+            val apps = launcherApps()
+            val q = query.trim().lowercase()
+            val match = apps.firstOrNull { it.first.lowercase() == q || it.second == query }
+                ?: apps.firstOrNull { it.first.lowercase().contains(q) }
+                ?: return@withContext null
+            val intent = packageManager.getLaunchIntentForPackage(match.second) ?: return@withContext null
+            collapse()
+            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            match.first
+        }
+    }
+
+    /** Launchable apps as (label, package). */
+    private fun launcherApps(): List<Pair<String, String>> {
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(launcher, 0)
+            .map { it.loadLabel(packageManager).toString() to it.activityInfo.packageName }
+            .distinctBy { it.second }
+    }
+
+    private fun asset(path: String): List<String> = assets.open(path).bufferedReader().use { it.readLines() }
 
     private fun imeVisible(): Boolean =
         ViewCompat.getRootWindowInsets(root)?.isVisible(WindowInsetsCompat.Type.ime()) == true
@@ -347,6 +459,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         private const val FRAME_MS = 16L
         private const val IME_HIDE_TIMEOUT_MS = 600L
         private const val IME_EXIT_ANIMATION_MS = 300L
+        /** Time for window changes to reach the input system before a gesture. */
+        private const val INPUT_SETTLE_MS = 80L
         private const val NOTIFICATION_ID = 1
 
         private const val BUBBLE_FLAGS = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or

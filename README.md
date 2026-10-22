@@ -15,7 +15,16 @@ deinem **eigenen Claude-Abo, ohne API-Key und ohne Termux**.
   Overlay blendet sich dafür kurz aus. Unveränderte Bildschirme werden — wie im Original per
   perzeptuellem Hash — nicht erneut geschickt, Claude wird stattdessen auf den letzten verwiesen.
 - **Echter Claude-Code-Agent:** Streaming-Antworten mit Markdown, Tool-Chips (Bash, Read,
-  WebFetch …), Stopp-Knopf, Modellwahl (Opus, Fable, Sonnet, Haiku, 1M-Varianten).
+  WebFetch …), Stopp-Knopf.
+- **Modellwahl mit Versionen:** Die Liste kommt direkt von der CLI (nur Modelle, die dein Abo
+  hat), z. B. „Opus 5.5 · claude-opus-5-5“; dazu ein Feld für jede andere Modell-ID.
+- **Sprechen statt tippen:** Mikrofon-Knopf (oder Kugel lange drücken) → Sprache wird live
+  erkannt und abgeschickt; die Antwort wird schon während des Schreibens vorgelesen.
+- **Claude zeigt auf deinen Bildschirm:** Pfeile, Boxen, Kreise, Markierungen und Beschriftungen
+  direkt über der App, die du gerade offen hast (z. B. bei Hausaufgaben oder Dokumenten).
+- **Claude bedient das Handy (optional):** Apps öffnen, tippen, wischen, Text eingeben, mit
+  Strichen zeichnen und **von Hand schreiben** (z. B. in Samsung Notes). Nur wenn du es im
+  ⋮-Menü erlaubst; nach jeder Aktion sieht Claude einen neuen Screenshot.
 - **Bilder und PDFs anhängen** über den System-Dateiauswähler.
 - **Unterhaltungen überleben Neustarts:** „Letzte Unterhaltung fortsetzen“; stirbt der
   CLI-Prozess, verbindet die nächste Nachricht in dieselbe Unterhaltung.
@@ -28,10 +37,14 @@ deinem **eigenen Claude-Abo, ohne API-Key und ohne Termux**.
 2. App öffnen und den Einrichtungsassistenten durchgehen:
    1. „Über anderen Apps einblenden“ erlauben
    2. Benachrichtigungen erlauben (hält den Dienst am Laufen)
-   3. **Claude Code herunterladen** — die offizielle CLI (ca. 130 MB) von npm, mit
+   3. Mikrofon erlauben (für die Spracheingabe)
+   4. **Claude Code herunterladen** — die offizielle CLI (ca. 130 MB) von npm, mit
       sha512-Prüfung
-   4. **Anmelden** — der Browser öffnet sich, nach dem Login den angezeigten Code einfügen
-   5. **Starten** — optional mit Bildschirmaufnahme (Android fragt einmal pro Start)
+   5. **Anmelden** — der Browser öffnet sich, nach dem Login den angezeigten Code einfügen
+   6. **Bedienungshilfe einschalten** (empfohlen) — Screenshots ohne Abfrage bei jedem Start;
+      nötig, damit Claude Apps bedienen kann. Ist der Schalter ausgegraut (Android 13+, als APK
+      installiert): App-Info → ⋮ → „Eingeschränkte Einstellungen zulassen“.
+   7. **Starten** — ohne Bedienungshilfe fragt Android einmal pro Start nach der Bildschirmaufnahme
 
 ## Wie es funktioniert
 
@@ -58,6 +71,24 @@ Die CLI wird **nicht** im APK mitgeliefert (sie ist nicht frei weiterverteilbar)
 beim offiziellen npm-Installer heruntergeladen. Den Login erledigt die CLI selbst
 (`claude auth login`); die App sieht weder Passwort noch Token.
 
+### Claudes Werkzeuge fürs Handy
+
+Die App betreibt einen kleinen MCP-Server auf `127.0.0.1` (mit Zufalls-Secret), den die CLI per
+`--mcp-config` einbindet. Alle Koordinaten sind Pixel des letzten Screenshots; die App rechnet sie
+auf den echten Bildschirm um.
+
+| Tool | Wirkung | Braucht Steuerung |
+|---|---|---|
+| `screenshot` | frischer Screenshot (Overlay und Tastatur ausgeblendet) | nein |
+| `draw_annotations` / `clear_annotations` | Pfeile, Boxen, Kreise, Markierungen, Text, Pfade über dem Bildschirm | nein |
+| `list_apps`, `open_app` | Apps auflisten/öffnen | ja |
+| `tap`, `long_press`, `swipe` | Touch-Gesten | ja |
+| `draw_strokes`, `write_handwriting` | mit dem Finger zeichnen / von Hand schreiben (Hershey-Einstrich-Schrift, Druck- oder Schreibschrift) | ja |
+| `type_text`, `press_key` | Text ins fokussierte Feld, Zurück/Home/Übersicht | ja |
+
+Tipp für Samsung Notes: Die Gesten kommen als Finger-Eingaben an. Ist in Notes „Nur S Pen“
+aktiv, scrollt der Finger statt zu zeichnen. Schalte das in den Notes-Einstellungen aus.
+
 ## Selbst bauen
 
 ```bash
@@ -77,18 +108,20 @@ erzeugen mit `scripts/fetch-native-deps.sh` (lädt gepinnte Alpine-Pakete, prüf
 - **Nur arm64-v8a.**
 - Das Grep-/Glob-Tool der CLI ist deaktiviert (es bräuchte die eingebaute ripgrep über
   `process.execPath`); Claude nutzt stattdessen `grep`/`find` in Bash.
-- Claude arbeitet in einem privaten Ordner der App und sieht andere Apps nur per Screenshot —
-  das Original konnte Office-Dokumente per COM bearbeiten, das gibt es auf Android nicht.
+- Claudes Dateien liegen in einem privaten Ordner der App; andere Apps sieht es per Screenshot
+  und bedient sie (falls erlaubt) über Gesten wie ein Mensch, ohne Druckstufen des S Pen.
 - Werkzeuge laufen ohne Rückfrage (`bypassPermissions`, wie beim Original), aber nur innerhalb
   der App-Sandbox.
-- Noch nicht portiert: Kontext-/Quota-Anzeige, `/compact`, Effort-Menü, Nachrichten-Warteschlange,
+- Noch nicht portiert: Quota-Anzeige, `/compact`, Effort-Menü, Nachrichten-Warteschlange,
   Sitzungsliste, Word/PowerPoint-Textextraktion.
 
 ## Manuelle Testliste (Gerät)
 
-Einrichtung → CLI-Download → Login → Kugel erscheint → Frage mit Screenshot → Streaming-Antwort
-mit Tool-Chip → Stopp während einer Antwort → Panel ziehen/vergrößern → Datei anhängen →
-App beenden und neu starten → „Letzte Unterhaltung fortsetzen“.
+Einrichtung → CLI-Download → Login → Kugel erscheint → Frage mit Screenshot (Overlay und
+Tastatur sind nicht im Bild) → Antwort streamt ohne Flackern → Modell-Auswahl zeigt Versionen →
+Mikrofon: sprechen, Antwort wird vorgelesen → „Markiere, wo ich tippen muss“ zeichnet einen Pfeil →
+Steuerung erlauben → „Öffne Samsung Notes und schreibe ‚Hallo‘“ → Stopp während einer Antwort →
+App neu starten → „Letzte Unterhaltung fortsetzen“.
 
 ## Lizenz
 

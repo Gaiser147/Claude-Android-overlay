@@ -67,7 +67,7 @@ class StreamJsonParser {
             "content_block_start" -> {
                 val block = event.obj("content_block") ?: return emptyList()
                 if (block.str("type") == "tool_use") {
-                    return listOf(ChatEvent.ToolStarted(block.str("id") ?: "", block.str("name") ?: "tool"))
+                    return listOf(ChatEvent.ToolStarted(block.str("id") ?: "", displayName(block.str("name") ?: "tool")))
                 }
             }
             "content_block_delta" -> {
@@ -90,7 +90,7 @@ class StreamJsonParser {
                 "text" -> if (streamed) null else block.str("text")?.takeIf { it.isNotBlank() }
                     ?.let { ChatEvent.AssistantText(it) }
                 "tool_use" -> {
-                    val name = block.str("name") ?: "tool"
+                    val name = displayName(block.str("name") ?: "tool")
                     ChatEvent.ToolCall(block.str("id") ?: "", name, summarizeTool(name, block.obj("input")))
                 }
                 else -> null
@@ -132,6 +132,9 @@ class StreamJsonParser {
 
     companion object {
         /** A one-line description of a tool call for its chip, like the desktop overlay shows. */
+        /** "mcp__phone__tap" → "tap": the app's own tools need no server prefix in the chip. */
+        fun displayName(name: String): String = name.removePrefix("mcp__phone__")
+
         fun summarizeTool(name: String, input: JsonObject?): String {
             if (input == null) return ""
             val key = when (name) {
@@ -141,7 +144,7 @@ class StreamJsonParser {
                 "WebFetch" -> listOf("url")
                 "WebSearch" -> listOf("query")
                 "Task", "Agent" -> listOf("description")
-                else -> listOf("description", "command", "file_path", "path", "url", "query", "pattern")
+                else -> listOf("description", "command", "file_path", "path", "url", "query", "pattern", "text", "name", "key")
             }.firstNotNullOfOrNull { input.str(it)?.takeIf(String::isNotBlank) } ?: return ""
             val oneLine = key.replace(Regex("\\s+"), " ").trim()
             return if (oneLine.length > 80) oneLine.take(79) + "…" else oneLine

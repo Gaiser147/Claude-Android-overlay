@@ -1,6 +1,13 @@
 package io.github.gaiser147.claudeoverlay.access
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.graphics.Path
+import android.os.Bundle
+import android.view.accessibility.AccessibilityNodeInfo
+import io.github.gaiser147.claudeoverlay.tools.Stroke
 import android.graphics.Bitmap
 import android.os.Build
 import android.view.Display
@@ -68,8 +75,70 @@ class ControlService : AccessibilityService() {
         return null
     }
 
+    /**
+     * Performs [strokes] one after another, lifting the finger in between, as touch input to
+     * whatever app is on screen. Returns false if Android cancelled one.
+     */
+    suspend fun perform(strokes: List<Stroke>): Boolean {
+        val maxDuration = GestureDescription.getMaxGestureDuration()
+        for ((i, stroke) in strokes.withIndex()) {
+            val path = Path().apply {
+                val first = stroke.points.first()
+                moveTo(first.x, first.y)
+                stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
+            }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, stroke.durationMs.coerceIn(1, maxDuration)))
+                .build()
+            val done = suspendCancellableCoroutine { cont ->
+                val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) = cont.resume(true)
+                    override fun onCancelled(gestureDescription: GestureDescription?) = cont.resume(false)
+                }, null)
+                if (!accepted) cont.resume(false)
+            }
+            if (!done) return false
+            if (i < strokes.lastIndex) delay(PEN_LIFT_MS)
+        }
+        return true
+    }
+
+    /** Types into the focused field: appends via ACTION_SET_TEXT, else pastes. */
+    fun typeText(text: String, submit: Boolean): String {
+        val node = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: return "No text field has focus. Tap the field first, then type."
+        val existing = if (node.isShowingHintText) "" else node.text?.toString().orEmpty()
+        val typed = node.performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT,
+            Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, existing + text)
+            },
+        ) || run {
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Claude", text))
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        }
+        if (!typed) return "The focused field didn't accept text."
+        if (submit && Build.VERSION.SDK_INT >= 30) {
+            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        }
+        return "Typed ${text.length} characters" + if (submit) " and pressed enter" else ""
+    }
+
+    fun pressKey(key: String): Boolean {
+        val action = when (key) {
+            "back" -> GLOBAL_ACTION_BACK
+            "home" -> GLOBAL_ACTION_HOME
+            "recents" -> GLOBAL_ACTION_RECENTS
+            "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+            "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
+            else -> return false
+        }
+        return performGlobalAction(action)
+    }
+
     companion object {
         private const val SCREENSHOT_INTERVAL_MS = 350L
+        private const val PEN_LIFT_MS = 30L
 
         private val _instance = MutableStateFlow<ControlService?>(null)
         /** The connected service, or null while it's off in the system's accessibility settings. */

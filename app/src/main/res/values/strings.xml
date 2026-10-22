@@ -55,4 +55,7 @@
     <string name="stop_speaking">Stop reading aloud</string>
     <string name="read_aloud">Always read replies aloud</string>
     <string name="step_microphone">Allow the microphone (to talk to Claude)</string>
+    <string name="clear_drawings">Clear Claude\'s drawings</string>
+    <string name="control_on">Claude may operate the phone</string>
+    <string name="allow_control">Let Claude operate the phone</string>
 </resources>

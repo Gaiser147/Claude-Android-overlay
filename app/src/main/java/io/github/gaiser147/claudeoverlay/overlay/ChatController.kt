@@ -65,6 +65,10 @@ data class ChatUiState(
     val speaking: Boolean = false,
     /** Read every reply aloud, not only replies to spoken messages. */
     val readAloud: Boolean = false,
+    /** The user lets Claude operate the phone (needs the accessibility service too). */
+    val controlAllowed: Boolean = false,
+    /** Claude's drawings are on the screen. */
+    val drawingsShown: Boolean = false,
 )
 
 /**
@@ -78,9 +82,13 @@ class ChatController(
     captureWindow: CaptureWindow,
     private val voice: VoiceInput,
     private val speaker: Speaker,
+    /** `--mcp-config` registering the app's phone tools with the CLI. */
+    mcpConfig: String?,
+    /** Called as each new user message goes out (the overlay clears old drawings). */
+    private val onNewTurn: () -> Unit,
 ) {
     private val captureSequence = CaptureSequence(captureWindow)
-    private val session = ClaudeSession(graph.env, graph.proxy)
+    private val session = ClaudeSession(graph.env, graph.proxy, mcpConfig)
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state
 
@@ -109,6 +117,7 @@ class ChatController(
                     screenshots = graph.settings.screenshots(),
                     resumableSession = graph.settings.lastSession(),
                     readAloud = graph.settings.readAloud(),
+                    controlAllowed = graph.settings.controlAllowed(),
                 )
             }
             if (graph.auth.isLoggedIn()) startSession(null) else _state.update { it.copy(needsLogin = true) }
@@ -182,6 +191,19 @@ class ChatController(
 
     fun stopSpeaking() = speaker.stop()
 
+    fun setControlAllowed(on: Boolean) {
+        _state.update { it.copy(controlAllowed = on) }
+        scope.launch { graph.settings.setControlAllowed(on) }
+        if (on && ControlService.instance.value == null) {
+            notice("Phone control also needs the accessibility service: Settings ⋮ → step 6.", true)
+        }
+    }
+
+    fun setDrawingsShown(shown: Boolean) = _state.update { it.copy(drawingsShown = shown) }
+
+    /** A screenshot for the phone tools: always taken, whatever the screenshot toggle says. */
+    suspend fun captureForTools(): Shot? = takeShot()
+
     /** Mic button: start dictating, or finish (which sends what was said). */
     fun toggleVoice() {
         if (_state.value.listening) {
@@ -227,6 +249,7 @@ class ChatController(
         speaker.stop()
         speakTurn = spoken || s.readAloud
         chunker = SentenceChunker()
+        onNewTurn()
         _state.update { it.copy(busy = true, resumableSession = null, draft = "") }
         scope.launch {
             val shot = if (s.screenshots) takeShot() else null

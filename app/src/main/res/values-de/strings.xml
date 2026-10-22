@@ -53,4 +53,7 @@
     <string name="stop_speaking">Vorlesen stoppen</string>
     <string name="read_aloud">Antworten immer vorlesen</string>
     <string name="step_microphone">Mikrofon erlauben (um mit Claude zu sprechen)</string>
+    <string name="clear_drawings">Claudes Zeichnungen löschen</string>
+    <string name="control_on">Claude darf das Handy bedienen</string>
+    <string name="allow_control">Claude darf das Handy bedienen</string>
 </resources>

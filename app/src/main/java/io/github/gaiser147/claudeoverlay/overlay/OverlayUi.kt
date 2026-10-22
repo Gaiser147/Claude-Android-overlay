@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.LayersClear
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Screenshot
@@ -91,6 +93,8 @@ interface OverlayWindowActions {
     fun openApp()
     /** Opens the panel and starts dictation. */
     fun listen()
+    /** Removes Claude's drawings from the screen. */
+    fun clearDrawings()
 }
 
 /** The collapsed orb: tap to open, drag to move, ✓ when a reply finished while tucked away. */
@@ -182,6 +186,17 @@ private fun Header(
             Text("${state.contextTokens / 1000}k", color = c.faint, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Spacer(Modifier.weight(1f))
+        if (state.drawingsShown) {
+            IconButton(onClick = actions::clearDrawings) {
+                Icon(Icons.Default.LayersClear, stringResource(R.string.clear_drawings), tint = c.accent)
+            }
+        }
+        if (state.controlAllowed) {
+            Icon(
+                Icons.Default.TouchApp, stringResource(R.string.control_on), tint = c.accent,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         if (state.speaking) {
             IconButton(onClick = controller::stopSpeaking) {
                 Icon(Icons.AutoMirrored.Filled.VolumeOff, stringResource(R.string.stop_speaking), tint = c.accent)
@@ -202,6 +217,10 @@ private fun Header(
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.read_aloud) + if (state.readAloud) "  ✓" else "") },
                     onClick = { moreMenu = false; controller.setReadAloud(!state.readAloud) },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.allow_control) + if (state.controlAllowed) "  ✓" else "") },
+                    onClick = { moreMenu = false; controller.setControlAllowed(!state.controlAllowed) },
                 )
                 DropdownMenuItem(text = { Text(stringResource(R.string.attach_files)) }, onClick = {
                     moreMenu = false; actions.pickFiles()

@@ -44,6 +44,7 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     private val screenshotsKey = booleanPreferencesKey("screenshots")
     private val modelsKey = stringPreferencesKey("models")
     private val readAloudKey = booleanPreferencesKey("read_aloud")
+    private val controlKey = booleanPreferencesKey("phone_control")
 
     val model: Flow<String> = store.data.map { it[modelKey] ?: ClaudeSession.DEFAULT_MODEL }
     val screenshots: Flow<Boolean> = store.data.map { it[screenshotsKey] ?: true }
@@ -59,6 +60,10 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
 
     suspend fun readAloud(): Boolean = store.data.first()[readAloudKey] ?: false
     suspend fun setReadAloud(value: Boolean) = store.edit { it[readAloudKey] = value }
+
+    /** Whether Claude may operate the phone (tap, type, open apps). Off until the user opts in. */
+    suspend fun controlAllowed(): Boolean = store.data.first()[controlKey] ?: false
+    suspend fun setControlAllowed(value: Boolean) = store.edit { it[controlKey] = value }
 
     suspend fun setModels(models: List<ModelInfo>) = store.edit { it[modelsKey] = ModelInfo.toJson(models) }
 
