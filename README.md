@@ -37,8 +37,10 @@ deinem **eigenen Claude-Abo, ohne API-Key und ohne Termux**.
 
 ## Installation
 
-1. APK installieren: aus den Artefakten des GitHub-Actions-Laufs (`claude-overlay-debug-apk`)
-   oder selbst bauen (unten). Benötigt ein **arm64**-Gerät mit Android 8.0+.
+1. APK installieren: die neueste Version unter **Releases** des Repositorys
+   (`claude-overlay-<version>.apk`), alternativ das Debug-APK aus den Artefakten eines
+   Actions-Laufs oder selbst bauen (unten). Benötigt ein **arm64**-Gerät mit Android 8.0+.
+   Updates einfach drüber installieren; Login und Einstellungen bleiben erhalten.
 2. App öffnen und den Einrichtungsassistenten durchgehen:
    1. „Über anderen Apps einblenden“ erlauben
    2. Benachrichtigungen erlauben (hält den Dienst am Laufen)
@@ -135,6 +137,30 @@ mit `type_text` schreiben lassen; das Tool weist Claude selbst darauf hin.
   nie einen zweiten CLI-Prozess, nur um den Login zu prüfen (sie liest die Datei), beendet die CLI
   sanft statt hart und startet bei einem Login-Fehler einmal eine frische CLI, bevor sie dich zur
   Anmeldung schickt.
+
+## Releases
+
+Jeder Push auf `main` (und ein manueller Start unter Actions → Release → „Run workflow“) baut
+ein signiertes Release-APK und veröffentlicht es als GitHub-Release `v0.2.<Lauf>`.
+Dafür braucht das Repository einmalig einen Signierschlüssel als Secrets (Settings → Secrets
+and variables → Actions → New repository secret):
+
+| Secret | Inhalt |
+|---|---|
+| `RELEASE_KEYSTORE_BASE64` | der Keystore, base64-kodiert (`base64 -w0 release.jks`) |
+| `RELEASE_KEYSTORE_PASSWORD` | Passwort des Keystores |
+| `RELEASE_KEY_ALIAS` | Alias des Schlüssels |
+| `RELEASE_KEY_PASSWORD` | Passwort des Schlüssels |
+
+Schlüssel erzeugen (einmalig, gut aufbewahren – ohne ihn lassen sich Updates nicht mehr über
+die installierte App installieren):
+
+```bash
+keytool -genkeypair -keystore release.jks -alias overlay -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Ein vorher installiertes Debug-APK hat eine andere Signatur: einmal deinstallieren, dann das
+Release installieren (danach neu anmelden).
 
 ## Selbst bauen
 
