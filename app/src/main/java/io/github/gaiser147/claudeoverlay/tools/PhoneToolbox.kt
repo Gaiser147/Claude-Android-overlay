@@ -143,7 +143,7 @@ class PhoneToolbox(
             Strokes.drawn(pts)
         }
         if (strokes.size > MAX_STROKES) throw BadArgs("at most $MAX_STROKES strokes per call")
-        return act("Drew ${strokes.size} stroke(s)") { gestureOrFail(strokes) }
+        return act("Drew ${strokes.size} stroke(s) $FINGER_NOTE") { gestureOrFail(strokes) }
     }
 
     private suspend fun handwriting(args: JsonObject): ToolResult {
@@ -159,7 +159,7 @@ class PhoneToolbox(
             Strokes.drawn(s.map { p -> g.toScreen(p.x, p.y) })
         }
         if (strokes.size > MAX_HANDWRITING_STROKES) throw BadArgs("text too long for one call; split it up")
-        return act("Wrote \"${text.take(40)}\"") { gestureOrFail(strokes) }
+        return act("Wrote \"${text.take(40)}\" $FINGER_NOTE") { gestureOrFail(strokes) }
     }
 
     private fun point(args: JsonObject, kx: String, ky: String): Pt {
@@ -185,9 +185,18 @@ class PhoneToolbox(
         const val MAX_HANDWRITING_STROKES = 600
         const val DEFAULT_LETTER_HEIGHT = 28f
 
+        /**
+         * Android lets apps inject touches only as a finger, never as a stylus, and note apps
+         * on pen devices often pan with the finger instead of drawing.
+         */
+        const val FINGER_NOTE = "as finger touches. Check the screenshot: if no ink appeared or the page only moved, " +
+            "the app draws with the stylus only. Then tell the user to allow drawing with the finger in the app " +
+            "(Samsung Notes: tap the active pen in the toolbar or open the note's ⋮ menu and turn on drawing with " +
+            "finger / turn off 'S Pen only'), or write with the app's text tool (keyboard icon) and type_text instead"
+
         private const val XY = """{"type":"number","description":"pixels in the latest screenshot"}"""
         private const val POINT = """{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"[x, y] in screenshot pixels"}"""
-        private const val COLOR = """{"type":"string","description":"#RRGGBB, optional (default: Claude orange)"}"""
+        private const val COLOR = """{"type":"string","description":"red, orange, yellow, green, blue, purple, pink, black, gray or #RRGGBB (default: red-orange pen; highlights default to yellow)"}"""
 
         private fun tool(name: String, description: String, schema: String): JsonObject =
             Json.parseToJsonElement(
@@ -202,16 +211,26 @@ class PhoneToolbox(
             ),
             tool(
                 "draw_annotations",
-                "Draw on top of the user's screen to point things out: arrows, boxes, circles, highlights, text labels, freehand paths. Drawings stay until replaced or cleared and don't block touches. Coordinates are pixels in the latest screenshot.",
+                "Annotate the user's screen like a tutor with a pen: the marks are rendered as natural handwriting " +
+                    "(tapered marker strokes, curved arrows, hand-drawn circles, handwritten labels) on a layer that " +
+                    "never blocks touches and stays until replaced or cleared. Prefer few, purposeful marks: circle or " +
+                    "underline the thing you mean, an arrow plus a 1–4 word label, a check or cross when correcting, a " +
+                    "highlight behind a phrase. Don't cover the text you're pointing at; put labels in empty space. " +
+                    "For diagrams, use 'svg' with path data (smooth curves) instead of many boxes, and 'dot' for nodes. " +
+                    "Coordinates are pixels in the latest screenshot.",
                 """{"type":"object","required":["shapes"],"properties":{
                   "clear_previous":{"type":"boolean","description":"remove earlier drawings first (default true)"},
                   "shapes":{"type":"array","items":{"type":"object","required":["type"],"properties":{
-                    "type":{"type":"string","enum":["arrow","box","circle","highlight","text","path"]},
-                    "from":$POINT,"to":$POINT,
-                    "x":$XY,"y":$XY,"width":$XY,"height":$XY,"radius":$XY,
-                    "text":{"type":"string","description":"for type text"},
-                    "points":{"type":"array","items":$POINT,"description":"for type path"},
-                    "label":{"type":"string","description":"short caption next to arrow/box/circle"},
+                    "type":{"type":"string","enum":["arrow","circle","ellipse","box","underline","strike","highlight","check","cross","dot","text","path","svg"],
+                      "description":"arrow: from,to[,bend -1..1]; circle: x,y,radius or x,y,width,height (box to encircle); box/highlight/strike: x,y,width,height; underline: x,y(baseline),width[,wavy]; check/cross/dot: x,y[,size]; text: x,y(top-left),text[,size]; path: points; svg: d[,x,y,scale]"},
+                    "from":$POINT,"to":$POINT,"bend":{"type":"number"},
+                    "x":$XY,"y":$XY,"width":$XY,"height":$XY,"radius":$XY,"size":$XY,
+                    "wavy":{"type":"boolean"},
+                    "text":{"type":"string"},
+                    "points":{"type":"array","items":$POINT},
+                    "d":{"type":"string","description":"SVG path data in screenshot pixels (M L H V C S Q T A Z)"},
+                    "scale":{"type":"number"},
+                    "label":{"type":"string","description":"short handwritten caption placed next to the mark"},
                     "color":$COLOR}}}}}""",
             ),
             tool("clear_annotations", "Remove everything drawn with draw_annotations.", """{"type":"object","properties":{}}"""),

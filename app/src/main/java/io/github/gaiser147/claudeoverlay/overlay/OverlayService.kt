@@ -185,6 +185,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             setViewTreeSavedStateRegistryOwner(this@OverlayService)
         }
         wm.addView(root, params)
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> publishKeepClear() }
     }
 
     private val expanded get() = controller.state.value.expanded
@@ -386,7 +387,22 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     private fun hideKeyboard(): Boolean =
         getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(root.windowToken, 0)
 
-    private fun update() = runCatching { wm.updateViewLayout(root, params) }
+    private fun update() {
+        runCatching { wm.updateViewLayout(root, params) }
+        root.post(::publishKeepClear)
+    }
+
+    /** Tells the drawing layer where the panel/orb is, so drawings never cover it. */
+    private fun publishKeepClear() {
+        if (!root.isAttachedToWindow) return
+        val loc = IntArray(2)
+        root.getLocationOnScreen(loc)
+        annotations.keepClear(
+            androidx.compose.ui.geometry.Rect(
+                loc[0].toFloat(), loc[1].toFloat(), (loc[0] + root.width).toFloat(), (loc[1] + root.height).toFloat(),
+            )
+        )
+    }
 
     private inner class OverlayRoot(context: Context) : FrameLayout(context) {
         @SuppressLint("ClickableViewAccessibility")

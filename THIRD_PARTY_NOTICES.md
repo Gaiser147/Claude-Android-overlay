@@ -28,6 +28,13 @@ https://paulbourke.net/dataformats/hershey/ (glyph file `hershey`, maps `romans.
 - The format of the Font data in this distribution was originally created by James Hurt,
   Cognition, Inc., 900 Technology Park Drive, Billerica, MA 01821.
 
+## Caveat font (`app/src/main/res/font/caveat_semibold.ttf`)
+
+Handwriting for Claude's on-screen labels. Caveat, Copyright 2014 The Caveat Project Authors
+(https://github.com/googlefonts/caveat), licensed under the SIL Open Font License 1.1 — full
+text in `third_party/Caveat-OFL.txt`. The file is a static SemiBold (wght 600) instance cut from
+the variable font with fontTools' instancer; glyphs are unchanged.
+
 ## Downloaded at run time, not bundled
 
 The **Claude Code CLI** (`@anthropic-ai/claude-code-linux-arm64-musl` from registry.npmjs.org)

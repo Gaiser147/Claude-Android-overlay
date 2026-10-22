@@ -20,8 +20,11 @@ deinem **eigenen Claude-Abo, ohne API-Key und ohne Termux**.
   hat), z. B. „Opus 5.5 · claude-opus-5-5“; dazu ein Feld für jede andere Modell-ID.
 - **Sprechen statt tippen:** Mikrofon-Knopf (oder Kugel lange drücken) → Sprache wird live
   erkannt und abgeschickt; die Antwort wird schon während des Schreibens vorgelesen.
-- **Claude zeigt auf deinen Bildschirm:** Pfeile, Boxen, Kreise, Markierungen und Beschriftungen
-  direkt über der App, die du gerade offen hast (z. B. bei Hausaufgaben oder Dokumenten).
+- **Claude zeigt auf deinen Bildschirm** – wie ein Tutor mit Stift: gebogene Pfeile, umkreisen,
+  (wellig) unterstreichen, Textmarker, ✓ und ✗, handschriftliche Notizen und kleine Skizzen direkt
+  über der App, die du offen hast (z. B. Hausaufgaben, Dokumente). Die Striche laufen spitz zu,
+  zittern leicht und erscheinen nacheinander, als würde jemand mitschreiben; das Chat-Fenster
+  bleibt frei.
 - **Claude bedient das Handy (optional):** Apps öffnen, tippen, wischen, Text eingeben, mit
   Strichen zeichnen und **von Hand schreiben** (z. B. in Samsung Notes). Nur wenn du es im
   ⋮-Menü erlaubst; nach jeder Aktion sieht Claude einen neuen Screenshot.
@@ -80,14 +83,18 @@ auf den echten Bildschirm um.
 | Tool | Wirkung | Braucht Steuerung |
 |---|---|---|
 | `screenshot` | frischer Screenshot (Overlay und Tastatur ausgeblendet) | nein |
-| `draw_annotations` / `clear_annotations` | Pfeile, Boxen, Kreise, Markierungen, Text, Pfade über dem Bildschirm | nein |
+| `draw_annotations` / `clear_annotations` | Pfeil, Kreis/Ellipse, Box, Unterstreichung (auch wellig), Durchstreichen, Textmarker, ✓/✗, Punkt, Handschrift-Text, Pfad, SVG-Pfad | nein |
 | `list_apps`, `open_app` | Apps auflisten/öffnen | ja |
 | `tap`, `long_press`, `swipe` | Touch-Gesten | ja |
 | `draw_strokes`, `write_handwriting` | mit dem Finger zeichnen / von Hand schreiben (Hershey-Einstrich-Schrift, Druck- oder Schreibschrift) | ja |
 | `type_text`, `press_key` | Text ins fokussierte Feld, Zurück/Home/Übersicht | ja |
 
-Tipp für Samsung Notes: Die Gesten kommen als Finger-Eingaben an. Ist in Notes „Nur S Pen“
-aktiv, scrollt der Finger statt zu zeichnen. Schalte das in den Notes-Einstellungen aus.
+**Samsung Notes / S Pen:** Android erlaubt Apps nur, Eingaben als *Finger* einzuspielen, nie als
+Stift. Auf Geräten mit S Pen verschiebt der Finger in Samsung Notes standardmäßig das Blatt, statt
+zu zeichnen – dann wackelt die Seite nur. Abhilfe: in Samsung Notes das Zeichnen mit dem Finger
+erlauben (je nach Version in den Notes-Einstellungen unter „S Pen“ die Option „Nur S Pen“
+ausschalten bzw. „Mit Finger zeichnen“ einschalten). Alternativ schreibt Claude über das
+Text-Werkzeug (Tastatur-Symbol) mit `type_text`; das Tool weist Claude selbst darauf hin.
 
 ## Selbst bauen
 

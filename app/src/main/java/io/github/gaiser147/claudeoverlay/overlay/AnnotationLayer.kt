@@ -7,6 +7,7 @@ import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,23 +19,27 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.sp
@@ -42,11 +47,17 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import io.github.gaiser147.claudeoverlay.R
 import io.github.gaiser147.claudeoverlay.access.ControlService
 import io.github.gaiser147.claudeoverlay.tools.Annotation
+import io.github.gaiser147.claudeoverlay.tools.Ink
+import io.github.gaiser147.claudeoverlay.tools.InkMark
+import io.github.gaiser147.claudeoverlay.tools.InkStroke
+import io.github.gaiser147.claudeoverlay.tools.InkText
 import io.github.gaiser147.claudeoverlay.tools.Pt
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
@@ -63,6 +74,8 @@ class AnnotationLayer(
     private val owner: Any,
 ) {
     private var annotations by mutableStateOf<List<Annotation>>(emptyList())
+    /** Screen area to keep clear: the overlay's panel or orb (this layer is above them). */
+    private var keepClear by mutableStateOf<Rect?>(null)
     /** Bumped on every draw so new shapes animate in. */
     private var generation by mutableIntStateOf(0)
     private var view: ComposeView? = null
@@ -82,6 +95,10 @@ class AnnotationLayer(
     fun clear() {
         annotations = emptyList()
         detach()
+    }
+
+    fun keepClear(rect: Rect?) {
+        if (keepClear != rect) keepClear = rect
     }
 
     /** Out of the way for screenshots and gestures (alpha 0 never obscures touches). */
@@ -118,7 +135,7 @@ class AnnotationLayer(
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setViewTreeLifecycleOwner(owner as LifecycleOwner)
             setViewTreeSavedStateRegistryOwner(owner as SavedStateRegistryOwner)
-            setContent { Drawings(annotations, generation) }
+            setContent { Drawings(annotations, generation, keepClear) }
         }
         runCatching { wm.addView(v, p) }.onSuccess {
             view = v
@@ -139,99 +156,161 @@ class AnnotationLayer(
         } else 0.8f
 }
 
-private val Accent = Color(0xFFD97757)
-private val HighlightDefault = Color(0xFFFFD54F)
+/** Claude's handwriting: Caveat (SIL OFL 1.1), see THIRD_PARTY_NOTICES.md. */
+private val Handwriting = FontFamily(Font(R.font.caveat_semibold, FontWeight.SemiBold))
 
 @Composable
-private fun Drawings(annotations: List<Annotation>, generation: Int) {
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(generation) {
-        progress.snapTo(0f)
-        progress.animateTo(1f, tween(DRAW_IN_MS))
+private fun Drawings(annotations: List<Annotation>, generation: Int, exclusion: Rect?) {
+    val density = LocalDensity.current.density
+    val marks = remember(annotations, density) {
+        val ink = Ink(density)
+        annotations.map(ink::render)
     }
-    // The window may not start at the screen's corner (cutouts, bars); shapes are in screen pixels.
+    // Marks appear one after another at writing speed, like someone annotating by hand.
+    val schedule = remember(marks) { DrawSchedule(marks.map { it.effort }, density) }
+    val clock = remember { Animatable(0f) }
+    LaunchedEffect(generation) {
+        clock.snapTo(0f)
+        clock.animateTo(schedule.totalMs.toFloat(), tween(schedule.totalMs, easing = LinearEasing))
+    }
     var origin by remember { mutableStateOf(Offset.Zero) }
     val measurer = rememberTextMeasurer()
     Canvas(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionOnScreen() }) {
-        val t = progress.value
-        annotations.forEach { a ->
-            val color = a.color?.let { Color(it) } ?: if (a is Annotation.Highlight) HighlightDefault else Accent
-            val strokeWidth = px(4)
-            val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
-            fun o(p: Pt) = Offset(p.x - origin.x, p.y - origin.y)
-            when (a) {
-                is Annotation.Highlight -> drawRect(
-                    color.copy(alpha = 0.35f * t), topLeft = o(a.topLeft), size = size(o(a.topLeft), o(a.bottomRight)),
-                )
-                is Annotation.Label -> label(measurer, a.text, o(a.at), color, t)
-                else -> {
-                    val path = outline(a, ::o)
-                    drawPath(partial(path, t), color, style = stroke)
-                    if (a is Annotation.Arrow && t >= 1f) arrowHead(o(a.from), o(a.to), color, stroke)
-                }
+        val draw = {
+            translate(-origin.x, -origin.y) {
+                marks.forEachIndexed { i, mark -> drawMark(mark, schedule.progress(i, clock.value), measurer) }
             }
-            a.label?.let { text -> labelAnchor(a, ::o)?.let { label(measurer, text, it, color, t) } }
+        }
+        // Never draw over the overlay's own panel or orb: this layer sits above them.
+        if (exclusion != null) {
+            clipRect(
+                exclusion.left - origin.x, exclusion.top - origin.y,
+                exclusion.right - origin.x, exclusion.bottom - origin.y,
+                clipOp = ClipOp.Difference,
+            ) { draw() }
+        } else draw()
+    }
+}
+
+/** When each mark starts and how long it takes, from how much writing it is. */
+private class DrawSchedule(efforts: List<Float>, density: Float) {
+    private val durations: List<Int>
+    private val starts: List<Int>
+    val totalMs: Int
+
+    init {
+        // ~0.9 dp of pen travel per ms, a brisk hand; whole drawings are capped so a big
+        // diagram doesn't take ages to appear.
+        val raw = efforts.map { (it / (0.9f * density)).coerceIn(MIN_MARK_MS, MAX_MARK_MS) }
+        val sum = raw.sum()
+        val k = if (sum > MAX_TOTAL_MS) MAX_TOTAL_MS / sum else 1f
+        durations = raw.map { (it * k).toInt().coerceAtLeast(1) }
+        starts = durations.runningFold(0) { acc, d -> acc + d }.dropLast(1)
+        totalMs = durations.sum().coerceAtLeast(1)
+    }
+
+    fun progress(i: Int, nowMs: Float): Float = ((nowMs - starts[i]) / durations[i]).coerceIn(0f, 1f)
+
+    private companion object {
+        const val MIN_MARK_MS = 160f
+        const val MAX_MARK_MS = 700f
+        const val MAX_TOTAL_MS = 2600f
+    }
+}
+
+/** Draws [mark] up to [progress]: strokes in order by pen travel, then its words. */
+private fun DrawScope.drawMark(mark: InkMark, progress: Float, measurer: TextMeasurer) {
+    if (progress <= 0f) return
+    val strokeLen = mark.strokes.sumOf { it.length.toDouble() }.toFloat()
+    val total = mark.effort.coerceAtLeast(1f)
+    var budget = progress * total
+    for (s in mark.strokes) {
+        if (budget <= 0f) return
+        val shown = minOf(1f, budget / s.length.coerceAtLeast(1f))
+        drawInk(s, shown)
+        budget -= s.length
+    }
+    if (mark.texts.isEmpty()) return
+    val textShare = ((progress * total - strokeLen) / (total - strokeLen).coerceAtLeast(1f)).coerceIn(0f, 1f)
+    if (textShare > 0f) mark.texts.forEach { drawHandwriting(it, textShare, measurer) }
+}
+
+/** One stroke as a filled outline whose width follows the pen pressure, with a faint halo. */
+private fun DrawScope.drawInk(s: InkStroke, fraction: Float) {
+    val n = if (fraction >= 1f) s.points.size else prefixCount(s, fraction)
+    if (n < 2) return
+    val color = Color(s.color)
+    if (!s.marker) {
+        // A soft paper-coloured edge keeps ink legible over busy text or dark screens.
+        drawPath(outline(s, n, extra = 1.6f * density), Color.White.copy(alpha = 0.32f))
+    }
+    drawPath(outline(s, n, extra = 0f), color.copy(alpha = s.alpha))
+}
+
+/** How many points of [s] cover the first [fraction] of its length. */
+private fun prefixCount(s: InkStroke, fraction: Float): Int {
+    val target = s.length * fraction
+    var acc = 0f
+    for (i in 1 until s.points.size) {
+        acc += hypot(s.points[i].x - s.points[i - 1].x, s.points[i].y - s.points[i - 1].y)
+        if (acc >= target) return i + 1
+    }
+    return s.points.size
+}
+
+/** The stroke's outline: both sides of the centreline at half the local width, round ends. */
+private fun outline(s: InkStroke, n: Int, extra: Float): Path {
+    val left = ArrayList<Offset>(n)
+    val right = ArrayList<Offset>(n)
+    for (i in 0 until n) {
+        val p = s.points[i]
+        val a = s.points[maxOf(0, i - 1)]
+        val b = s.points[minOf(n - 1, i + 1)]
+        var dx = b.x - a.x
+        var dy = b.y - a.y
+        val l = hypot(dx, dy)
+        if (l < 1e-3f) { dx = 1f; dy = 0f } else { dx /= l; dy /= l }
+        val w = s.widths[i] / 2 + extra
+        left += Offset(p.x - dy * w, p.y + dx * w)
+        right += Offset(p.x + dy * w, p.y - dx * w)
+    }
+    return Path().apply {
+        moveTo(left[0].x, left[0].y)
+        for (i in 1 until n) lineTo(left[i].x, left[i].y)
+        cap(s.points[n - 1], left[n - 1], right[n - 1])
+        for (i in n - 1 downTo 0) lineTo(right[i].x, right[i].y)
+        cap(s.points[0], right[0], left[0])
+        close()
+    }
+}
+
+/** A half-round pen end from [from] to [to] around [c]. */
+private fun Path.cap(c: Pt, from: Offset, to: Offset) {
+    val a0 = atan2(from.y - c.y, from.x - c.x)
+    val r = hypot(from.x - c.x, from.y - c.y)
+    var a1 = atan2(to.y - c.y, to.x - c.x)
+    // Go round the outside: the sweep is always half a turn, clockwise in screen space.
+    if (a1 > a0) a1 -= (2 * Math.PI).toFloat()
+    val steps = 6
+    for (k in 1..steps) {
+        val a = a0 + (a1 - a0) * k / steps
+        lineTo(c.x + r * cos(a), c.y + r * sin(a))
+    }
+}
+
+/** Handwritten words, revealed left to right as if being written, with a faint halo. */
+private fun DrawScope.drawHandwriting(t: InkText, fraction: Float, measurer: TextMeasurer) {
+    val base = TextStyle(fontFamily = Handwriting, fontSize = (t.size / density / fontScale).sp, fontWeight = FontWeight.SemiBold)
+    val ink = measurer.measure(t.text, base.copy(color = Color(t.color)))
+    val halo = measurer.measure(
+        t.text, base.copy(color = Color.White.copy(alpha = 0.8f), drawStyle = Stroke(width = 3.5f * density, join = StrokeJoin.Round)),
+    )
+    val x = t.at.x.coerceIn(0f, (size.width - ink.size.width).coerceAtLeast(0f))
+    val y = t.at.y.coerceIn(0f, (size.height - ink.size.height).coerceAtLeast(0f))
+    rotate(t.rotationDeg, pivot = Offset(x, y + ink.size.height / 2f)) {
+        clipRect(x - 8 * density, y - 8 * density, x + ink.size.width * fraction + 4 * density, y + ink.size.height + 8 * density) {
+            drawText(halo, topLeft = Offset(x, y))
+            drawText(ink, topLeft = Offset(x, y), alpha = Ink.INK_ALPHA)
         }
     }
 }
-
-private fun DrawScope.size(a: Offset, b: Offset) = Size(b.x - a.x, b.y - a.y)
-
-private fun DrawScope.outline(a: Annotation, o: (Pt) -> Offset): Path = Path().apply {
-    when (a) {
-        is Annotation.Arrow -> { val f = o(a.from); val t = o(a.to); moveTo(f.x, f.y); lineTo(t.x, t.y) }
-        is Annotation.Box -> addRoundRect(
-            androidx.compose.ui.geometry.RoundRect(Rect(o(a.topLeft), o(a.bottomRight)), CornerRadius(px(8)))
-        )
-        is Annotation.Circle -> { val c = o(a.center); addOval(Rect(c, a.radius)) }
-        is Annotation.Path -> a.points.map(o).let { pts ->
-            moveTo(pts[0].x, pts[0].y)
-            pts.drop(1).forEach { lineTo(it.x, it.y) }
-        }
-        else -> Unit
-    }
-}
-
-/** The first [fraction] of [path], for the draw-in animation. */
-private fun partial(path: Path, fraction: Float): Path {
-    if (fraction >= 1f) return path
-    val measure = PathMeasure().apply { setPath(path, false) }
-    return Path().also { measure.getSegment(0f, measure.length * fraction, it, true) }
-}
-
-private fun DrawScope.arrowHead(from: Offset, to: Offset, color: Color, stroke: Stroke) {
-    val angle = atan2((to.y - from.y).toDouble(), (to.x - from.x).toDouble())
-    val len = px(18)
-    for (side in listOf(-1, 1)) {
-        val a = angle + Math.PI + side * Math.toRadians(28.0)
-        drawLine(
-            color, to, Offset(to.x + (len * cos(a)).toFloat(), to.y + (len * sin(a)).toFloat()),
-            strokeWidth = stroke.width, cap = StrokeCap.Round,
-        )
-    }
-}
-
-/** Where a shape's caption goes: at the arrow's tail, above a box or circle. */
-private fun labelAnchor(a: Annotation, o: (Pt) -> Offset): Offset? = when (a) {
-    is Annotation.Arrow -> o(a.from)
-    is Annotation.Box -> o(a.topLeft).let { Offset(it.x, it.y - 34f) }
-    is Annotation.Circle -> o(a.center).let { Offset(it.x - a.radius, it.y - a.radius - 34f) }
-    is Annotation.Path -> o(a.points.first())
-    else -> null
-}
-
-private fun DrawScope.label(measurer: androidx.compose.ui.text.TextMeasurer, text: String, at: Offset, color: Color, t: Float) {
-    val layout = measurer.measure(text, TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
-    val pad = px(6)
-    val w = layout.size.width + 2 * pad
-    val h = layout.size.height + pad
-    // Keep the pill on screen.
-    val x = at.x.coerceIn(0f, (size.width - w).coerceAtLeast(0f))
-    val y = at.y.coerceIn(0f, (size.height - h).coerceAtLeast(0f))
-    drawRoundRect(color.copy(alpha = 0.92f * t), Offset(x, y), Size(w, h), CornerRadius(h / 2))
-    drawText(layout, topLeft = Offset(x + pad, y + pad / 2), alpha = t)
-}
-
-private fun DrawScope.px(dp: Int): Float = dp * density
-
-private const val DRAW_IN_MS = 450
