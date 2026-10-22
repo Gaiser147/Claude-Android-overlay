@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Claude Overlay</string>
+    <string name="setup_intro">A floating Claude Code window over any app. It runs the official Claude Code CLI on this phone with your own Claude subscription — no API key, no Termux.</string>
+    <string name="step_overlay">Allow display over other apps</string>
+    <string name="step_notifications">Allow notifications (keeps the overlay running)</string>
+    <string name="step_cli">Download Claude Code</string>
+    <string name="cli_installed">Installed: %1$s</string>
+    <string name="cli_explain">Fetches the official linux-arm64 build (about 130 MB download, 285 MB on disk) from npm and verifies its checksum.</string>
+    <string name="download">Download</string>
+    <string name="update">Check for update</string>
+    <string name="step_login">Sign in with your Claude account</string>
+    <string name="login_paste">Sign in using the browser, then copy the code it shows and paste it here.</string>
+    <string name="login_code">Code</string>
+    <string name="submit">Submit</string>
+    <string name="reopen_browser">Open browser again</string>
+    <string name="cancel">Cancel</string>
+    <string name="sign_in">Sign in</string>
+    <string name="step_start">Start the overlay</string>
+    <string name="with_screenshots">Send a screenshot with each message</string>
+    <string name="start_overlay">Start</string>
+    <string name="stop_overlay">Stop</string>
+    <string name="grant">Allow</string>
+    <string name="setup_footer">Claude runs with permission to use its tools without asking, inside this app\'s private folder. It can\'t read other apps\' data; it only sees your screen through the screenshots you send.</string>
+    <string name="notification_channel">Overlay</string>
+    <string name="notification_title">Claude Overlay is running</string>
+    <string name="notification_text">Tap to open the chat</string>
+    <string name="toggle_screenshots">Screenshots on/off</string>
+    <string name="new_conversation">New conversation</string>
+    <string name="attach_files">Attach files…</string>
+    <string name="open_app">Settings</string>
+    <string name="collapse">Collapse</string>
+    <string name="empty_title">Ask about what\'s on your screen</string>
+    <string name="empty_hint">Each message carries a fresh screenshot, so just ask.</string>
+    <string name="resume_last">Resume last conversation</string>
+    <string name="needs_login">Claude needs you to sign in again.</string>
+    <string name="remove">Remove</string>
+    <string name="input_hint">Message Claude…</string>
+    <string name="input_hint_screen">Ask about your screen…</string>
+    <string name="stop">Stop</string>
+    <string name="send">Send</string>
+    <string name="model">Model</string>
+    <string name="model_custom">Other model ID (e.g. a specific version)</string>
+    <string name="model_use">Use</string>
+    <string name="accessibility_label" translatable="false">Claude Overlay</string>
+    <string name="accessibility_description">Lets Claude Overlay take screenshots for Claude without asking on every start, and — only if you switch on phone control in the overlay — lets Claude tap, swipe, type, draw and open apps on your behalf.</string>
+    <string name="step_accessibility">Turn on the accessibility service (recommended)</string>
+    <string name="accessibility_explain">Screenshots without a prompt on every start; needed for Claude to operate apps. Settings → Accessibility → Installed apps → Claude Overlay. If the switch is greyed out (Android 13+, app installed as APK): App info → ⋮ → \"Allow restricted settings\", then try again.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="accessibility_on">On</string>
+    <string name="screenshots_via_accessibility">Screenshots come from the accessibility service; no screen-recording prompt needed.</string>
+    <string name="listening">Listening…</string>
+    <string name="speak">Speak</string>
+    <string name="stop_listening">Stop listening</string>
+    <string name="stop_speaking">Stop reading aloud</string>
+    <string name="read_aloud">Always read replies aloud</string>
+    <string name="step_microphone">Allow the microphone (to talk to Claude)</string>
+    <string name="clear_drawings">Clear Claude\'s drawings</string>
+    <string name="control_on">Claude may operate the phone</string>
+    <string name="allow_control">Let Claude operate the phone</string>
+    <string name="crash_title">The overlay stopped unexpectedly last time</string>
+    <string name="crash_share">Share report</string>
+    <string name="crash_dismiss">Dismiss</string>
+    <string name="step_battery">Don\'t let battery saving close the overlay</string>
+    <string name="battery_explain">Lets Claude Overlay keep running in the background. On Samsung also check Settings → Battery → Background usage limits: Claude Overlay must not be in “Sleeping apps” or “Deep sleeping apps”, and set its battery use to “Unrestricted”.</string>
+</resources>
