@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.graphics.PointF;
+import android.graphics.RectF;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
@@ -258,8 +259,20 @@ final class NotesBridge extends INotesBridge.Stub
             JSONArray strokes = new JSONObject(json).getJSONArray("strokes");
             if (strokes.length() == 0) return error("No strokes.");
             JSONArray first = strokes.getJSONObject(0).getJSONArray("points").getJSONArray(0);
-            Editor.PagePoint anchor = editor.toPage((float) first.getDouble(0), (float) first.getDouble(1));
+            float sx = (float) first.getDouble(0), sy = (float) first.getDouble(1);
+            Editor.PagePoint anchor = editor.toPage(sx, sy);
             if (anchor == null) return error("Couldn't place the strokes on the page.");
+            RectF bounds = editor.pageRect(anchor.page);
+            String where = "screen " + Math.round(sx) + "," + Math.round(sy) + " → page " + anchor.page + " of "
+                    + editor.pageCount() + " at " + Math.round(anchor.x) + "," + Math.round(anchor.y) + " (page "
+                    + Math.round(bounds.width()) + "×" + Math.round(bounds.height()) + ")";
+            Log.i(Bootstrap.TAG, "addStrokes: " + where);
+            // Never write ink off the page, where nobody would see it.
+            float margin = bounds.width() * 0.05f;
+            if (anchor.x < -margin || anchor.y < -margin || anchor.x > bounds.width() + margin
+                    || anchor.y > bounds.height() + margin) {
+                return error("The place lies outside the page (" + where + "); nothing was written.");
+            }
             float scale = editor.scale();
             ArrayList<Object> made = new ArrayList<>();
             int time = 0;
@@ -296,7 +309,7 @@ final class NotesBridge extends INotesBridge.Stub
             }
             for (Object o : made) seen.add((Integer) Editor.invoke(o, "getRuntimeHandle"));
             editor.redraw();
-            return new JSONObject().put("ok", true).put("count", made.size()).toString();
+            return new JSONObject().put("ok", true).put("count", made.size()).put("where", where).toString();
         });
     }
 
