@@ -39,7 +39,14 @@ sealed interface Annotation {
     }
     data class Path(val points: List<Pt>, override val color: Int?, override val label: String?, override val thickness: Float = 1f) : Annotation
     /** Free drawing from SVG path data: one polyline per subpath. */
-    data class Sketch(val contours: List<List<Pt>>, override val color: Int?, override val label: String?, override val thickness: Float = 1f) : Annotation
+    data class Sketch(
+        val contours: List<List<Pt>>,
+        override val color: Int?,
+        override val label: String?,
+        override val thickness: Float = 1f,
+        /** Draw the points exactly, with this constant pen width (px): no wobble, no halo. */
+        val exactWidth: Float? = null,
+    ) : Annotation
 }
 
 /** Parses the draw_annotations tool's `shapes` argument (screenshot pixels) into screen space. */

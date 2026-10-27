@@ -91,8 +91,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     private lateinit var annotations: AnnotationLayer
     private lateinit var suggestions: SuggestionLayer
     private lateinit var watcher: NotesWatcher
-    /** Claude's handwriting font, for writing into Claude Notes. */
-    private lateinit var cursive: HersheyFont
+    /** Claude's handwriting font (clear print), for writing into Claude Notes. */
+    private lateinit var print: HersheyFont
     private lateinit var mcp: McpHttpServer
 
     /**
@@ -129,8 +129,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             decided = { s, accepted -> controller.suggestionDecided(s.id, accepted) },
         )
         safeScope.launch { NotesLink.setPin(NotesPin.decode(AppGraph.get(this@OverlayService).settings.notesPin())) }
-        cursive = HersheyFont(asset("hershey/scripts.txt"))
-        val toolbox = PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), cursive)
+        print = HersheyFont(asset("hershey/romans.txt"))
+        val toolbox = PhoneToolbox(phoneHost, print, HersheyFont(asset("hershey/scripts.txt")))
         mcp = McpHttpServer(toolbox)
         controller = ChatController(
             AppGraph.get(this), safeScope, captureWindow, VoiceInput(this), Speaker(this),
@@ -457,7 +457,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         val ink = s.ink
         if (typed || ink == null || !NotesLink.status().ink) return NotesLink.insert(s.text)
         val unit = resources.displayMetrics.density
-        val marks = NotesInk.marks(s.marks.map(Ink(unit)::render), cursive)
+        val marks = NotesInk.marks(s.marks.map(Ink(unit)::render), print)
         return NotesLink.addStrokes(ink + marks)
     }
 

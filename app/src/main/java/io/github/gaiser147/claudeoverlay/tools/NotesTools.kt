@@ -91,7 +91,9 @@ data class Suggestion(
 ) {
     /** The handwritten text and the marks, as the drawing layer takes them. */
     val preview: List<Annotation>
-        get() = marks + (ink?.let { Annotation.Sketch(it.map(InkLine::points), PREVIEW_COLOR, null, 0.6f) }
+        get() = marks + (ink?.let { lines ->
+            Annotation.Sketch(lines.map(InkLine::points), PREVIEW_COLOR, null, exactWidth = lines.firstOrNull()?.width)
+        }
             ?: Annotation.Label(at, lines.joinToString("\n"), size, PREVIEW_COLOR))
 
     /** Bottom edge of the preview text (screen pixels), where the ✓/✗ buttons go. */
@@ -144,7 +146,7 @@ data class Suggestion(
  * The notes_* tools: write into the clone's open note (after the user's ✓, or directly),
  * read it, and check the connection. Part of [PhoneToolbox].
  */
-internal class NotesTools(private val host: PhoneHost, private val font: HersheyFont) {
+internal class NotesTools(private val host: PhoneHost, private val print: HersheyFont, private val cursive: HersheyFont) {
     private var nextId = 1
 
     suspend fun call(name: String, args: JsonObject, geometry: suspend () -> ShotGeometry): ToolResult? = when (name) {
@@ -173,6 +175,7 @@ internal class NotesTools(private val host: PhoneHost, private val font: Hershey
         if (!notes.status().ink) return ToolResult.text("This Claude Notes bridge can't write by hand yet; rebuild the clone with the current bridge. Use notes_insert for typed text meanwhile.", true)
         val text = args.text()
         val (at, size, maxWidth) = placement(args, g)
+        val font = font(args)
         val lines = Suggestion.previewLines(text, size, maxWidth)
         val ink = NotesInk.text(font, lines, at, size, args.color() ?: INK_COLOR)
             ?: return ToolResult.text("The handwriting font can't write ${font.missing(text).joinToString(" ")}; spell it differently or use notes_insert.", true)
@@ -180,10 +183,21 @@ internal class NotesTools(private val host: PhoneHost, private val font: Hershey
             ?: ToolResult.text("Wrote ${lines.size} line(s) by hand into the note (${ink.size} strokes, one undo step).")
     }
 
-    /** Where text goes ('at', or below 'around'), its letter height and wrap width, in screen pixels. */
+    /** Clear print by default; joined-up script only when asked for. */
+    private fun font(args: JsonObject) =
+        if ((args["style"] as? JsonPrimitive)?.content == "cursive") cursive else print
+
+    /**
+     * Where text goes ('at', or below 'around'), its letter height and wrap width, in screen
+     * pixels. Without a size, letters match the user's handwriting: the question's box height.
+     */
     private fun placement(args: JsonObject, g: ShotGeometry): Triple<Pt, Float, Float> {
-        val size = (args.num("size") ?: DEFAULT_SIZE).let(g::toScreenLength)
-        val around = args.box("around")?.let { (l, t, r, b) -> g.toScreen(l, t) to g.toScreen(r, b) }
+        val box = args.box("around")
+        val shotSize = args.num("size")?.coerceAtLeast(MIN_SIZE)
+            ?: box?.let { (_, t, _, b) -> ((b - t) * SIZE_PER_BOX_HEIGHT).coerceIn(MIN_SIZE, MAX_AUTO_SIZE) }
+            ?: DEFAULT_SIZE
+        val size = g.toScreenLength(shotSize)
+        val around = box?.let { (l, t, r, b) -> g.toScreen(l, t) to g.toScreen(r, b) }
         val at = args.point("at")?.let { (x, y) -> g.toScreen(x, y) }
             ?: around?.let { (tl, br) -> Pt(tl.x, br.y + size * 0.6f) }
             ?: throw NotesArgs("Give 'at' (where the text starts) or 'around' (the question's box) in screenshot pixels.")
@@ -202,7 +216,7 @@ internal class NotesTools(private val host: PhoneHost, private val font: Hershey
         val lines = Suggestion.previewLines(text, size, maxWidth)
         val suggestion = Suggestion(
             id = nextId++, text = text, at = at, size = size, lines = lines, marks = marks,
-            ink = NotesInk.text(font, lines, at, size, INK_COLOR),
+            ink = NotesInk.text(font(args), lines, at, size, INK_COLOR),
         )
         host.showSuggestion(suggestion)
         val status = connected()?.status()
@@ -241,7 +255,13 @@ internal class NotesTools(private val host: PhoneHost, private val font: Hershey
     class NotesArgs(message: String) : Exception(message)
 
     companion object {
-        const val DEFAULT_SIZE = 26f
+        /** Letter height (screenshot pixels) without a size or a question box to match. */
+        const val DEFAULT_SIZE = 36f
+        /** Smaller handwriting is hard to read on a page. */
+        const val MIN_SIZE = 24f
+        const val MAX_AUTO_SIZE = 60f
+        /** A question's box (often two lines) → letters about as tall as the user's. */
+        const val SIZE_PER_BOX_HEIGHT = 0.8f
         /** Claude's handwriting in the note: the preview's blue. */
         val INK_COLOR = Suggestion.PREVIEW_COLOR
 
@@ -277,7 +297,8 @@ internal class NotesTools(private val host: PhoneHost, private val font: Hershey
                 """{"type":"object","required":["text"],"properties":{$TEXT,
                   "around":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4,"description":"[left, top, right, bottom] of the question on the page (screenshot pixels); the preview goes below it"},
                   "at":$POINT,
-                  "size":{"type":"number","description":"letter height in screenshot pixels (default 26)"},
+                  "size":{"type":"number","description":"letter height in screenshot pixels (default: as tall as the user's handwriting in 'around'; at least 24)"},
+                  "style":{"type":"string","enum":["print","cursive"],"description":"print (default, easiest to read) or joined-up script"},
                   "max_width":{"type":"number","description":"wrap the preview at this width (screenshot pixels)"},
                   "marks":$shapes}}""",
             ),
@@ -289,7 +310,8 @@ internal class NotesTools(private val host: PhoneHost, private val font: Hershey
                 """{"type":"object","required":["text"],"properties":{"text":{"type":"string"},
                   "around":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4,"description":"[left, top, right, bottom] of what to write below (screenshot pixels)"},
                   "at":$POINT,
-                  "size":{"type":"number","description":"letter height in screenshot pixels (default 26)"},
+                  "size":{"type":"number","description":"letter height in screenshot pixels (default: as tall as the user's handwriting in 'around'; at least 24)"},
+                  "style":{"type":"string","enum":["print","cursive"],"description":"print (default, easiest to read) or joined-up script"},
                   "max_width":{"type":"number","description":"wrap at this width (screenshot pixels)"},
                   "color":{"type":"string","description":"blue (default), black, red, green or #RRGGBB"}}}""",
             ),

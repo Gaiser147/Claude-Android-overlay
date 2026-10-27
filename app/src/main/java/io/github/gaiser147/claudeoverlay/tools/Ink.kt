@@ -12,7 +12,15 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /** A pen or marker stroke: a centreline and the ink width at each of its points (px). */
-class InkStroke(val points: List<Pt>, val widths: List<Float>, val color: Int, val alpha: Float, val marker: Boolean = false) {
+class InkStroke(
+    val points: List<Pt>,
+    val widths: List<Float>,
+    val color: Int,
+    val alpha: Float,
+    val marker: Boolean = false,
+    /** A faint paper-coloured edge around the ink (off for exact handwriting, it blurs small letters). */
+    val halo: Boolean = true,
+) {
     val length: Float = points.zipWithNext { a, b -> hypot(b.x - a.x, b.y - a.y) }.sum()
 }
 
@@ -125,7 +133,12 @@ class Ink(private val unit: Float) {
                 a.label?.let { texts += labelNear(it, a.points.last(), awayFrom = a.points.first(), color = color, rnd = rnd) }
             }
             is Annotation.Sketch -> {
-                a.contours.forEach { stroke(polyline(it, rnd, amp = 0.5f * unit)) }
+                val exact = a.exactWidth
+                if (exact != null) {
+                    a.contours.filter { it.size >= 2 }.forEach {
+                        strokes += InkStroke(it, List(it.size) { exact }, color, 1f, halo = false)
+                    }
+                } else a.contours.forEach { stroke(polyline(it, rnd, amp = 0.5f * unit)) }
                 a.label?.let { l -> a.contours.first().first().let { texts += labelAbove(l, it, color, rnd) } }
             }
         }
