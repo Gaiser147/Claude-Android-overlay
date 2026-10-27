@@ -3,6 +3,7 @@ package io.github.gaiser147.notesbridge;
 import android.app.Activity;
 import android.graphics.Point;
 import android.graphics.PointF;
+import android.graphics.RectF;
 import android.view.View;
 
 import java.lang.reflect.Constructor;
@@ -51,22 +52,62 @@ final class Editor {
 
     /** A point on the screen → page index and the point in that page's own coordinates. */
     PagePoint toPage(float screenX, float screenY) throws ReflectiveOperationException {
+        PointF content = toContent(screenX, screenY);
+        if (content == null) return null;
+        int page = pageAt(content);
+        Point off = offset(page);
+        return new PagePoint(page, content.x - off.x, content.y - off.y);
+    }
+
+    /** A screen point in the document's content coordinates (all pages laid out). */
+    PointF toContent(float screenX, float screenY) throws ReflectiveOperationException {
         int[] loc = new int[2];
         view.getLocationOnScreen(loc);
-        PointF content = (PointF) invoke(scroller, "convertViewPointIntoContentPoint",
+        return (PointF) invoke(scroller, "convertViewPointIntoContentPoint",
                 new PointF(screenX - loc[0], screenY - loc[1]));
-        if (content == null) return null;
+    }
+
+    /**
+     * The page holding a content point, the way Notes finds it (SpenWNoteHelper, as in
+     * SpenPagePan); else the page whose rectangle contains it or lies nearest. Pages may sit
+     * side by side as well as one below the other.
+     */
+    int pageAt(PointF content) throws ReflectiveOperationException {
         int count = pageCount();
-        int best = -1;
-        for (int i = 0; i < count; i++) {
-            Point off = offset(i);
-            if (off == null) continue;
-            // Pages stack down the content; the last one starting above the point holds it.
-            if (content.y >= off.y && (best < 0 || off.y >= offset(best).y)) best = i;
+        try {
+            Object helper = Class.forName(Symbols.WNOTE_HELPER, true, note.getClass().getClassLoader())
+                    .getConstructor().newInstance();
+            try {
+                invoke(helper, "setDocument", note);
+                int i = (Integer) invoke(helper, "getPageIndexByXY", content.x, content.y);
+                if (i >= 0 && i < count) return i;
+            } finally {
+                invoke(helper, "close");
+            }
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
         }
-        if (best < 0) best = 0;
-        Point off = offset(best);
-        return new PagePoint(best, content.x - off.x, content.y - off.y);
+        int best = 0;
+        float bestDistance = Float.MAX_VALUE;
+        for (int i = 0; i < count; i++) {
+            RectF r = pageRect(i);
+            float dx = Math.max(Math.max(r.left - content.x, content.x - r.right), 0);
+            float dy = Math.max(Math.max(r.top - content.y, content.y - r.bottom), 0);
+            float d = dx * dx + dy * dy;
+            if (d < bestDistance) {
+                bestDistance = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /** Page [index] in content coordinates. */
+    RectF pageRect(int index) throws ReflectiveOperationException {
+        Object page = page(index);
+        Point off = (Point) invoke(page, "getOffset");
+        int w = (Integer) invoke(page, "getWidth");
+        int h = (Integer) invoke(page, "getHeight");
+        return new RectF(off.x, off.y, off.x + w, off.y + h);
     }
 
     /** First and last page the editor view shows right now. */
@@ -82,10 +123,7 @@ final class Editor {
 
     /** A point on the screen in the coordinates of page [page] (which may not contain it). */
     PagePoint toPageOf(int page, float screenX, float screenY) throws ReflectiveOperationException {
-        int[] loc = new int[2];
-        view.getLocationOnScreen(loc);
-        PointF content = (PointF) invoke(scroller, "convertViewPointIntoContentPoint",
-                new PointF(screenX - loc[0], screenY - loc[1]));
+        PointF content = toContent(screenX, screenY);
         Point off = offset(page);
         return new PagePoint(page, content.x - off.x, content.y - off.y);
     }

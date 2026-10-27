@@ -22,6 +22,8 @@ final class Symbols {
     static final String BASE_COMPOSER_FRAGMENT = "com.samsung.android.support.senl.nt.composer.main.base.view.BaseComposerFragment";
     /** getComposerView() → SpenComposer (getNoteZoomScroller()); getPresenter() → getDoc(). */
     static final String COMPOSER_VIEW = "com.samsung.android.support.senl.nt.composer.main.base.view.composer.ComposerView";
+    /** Finds the page at a content point: setDocument(note), getPageIndexByXY(x, y), close(). */
+    static final String WNOTE_HELPER = "com.samsung.android.sdk.composer.document.SpenWNoteHelper";
     /** The note document (pages, history). */
     static final String SPEN_WNOTE = "com.samsung.android.sdk.pen.worddoc.SpenWNote";
     /** A pen stroke: new SpenObjectStroke(penName, PointF[], float[] pressures, int[] timestamps). */
