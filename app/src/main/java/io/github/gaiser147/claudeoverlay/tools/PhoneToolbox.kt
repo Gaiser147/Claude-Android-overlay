@@ -76,7 +76,7 @@ class PhoneToolbox(
     @Volatile private var elements: List<Pt> = emptyList()
     /** The pen worked earlier: the app on screen likely draws only with it. */
     @Volatile private var penWorked = false
-    private val notes = NotesTools(host)
+    private val notes = NotesTools(host, cursive)
 
     override fun definitions(): List<JsonObject> = DEFINITIONS
 

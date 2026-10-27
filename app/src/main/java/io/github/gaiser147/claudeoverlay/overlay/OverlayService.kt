@@ -49,7 +49,9 @@ import io.github.gaiser147.claudeoverlay.tools.InputKind
 import io.github.gaiser147.claudeoverlay.tools.PenState
 import io.github.gaiser147.claudeoverlay.tools.ScreenSnapshot
 import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
+import io.github.gaiser147.claudeoverlay.tools.Ink
 import io.github.gaiser147.claudeoverlay.tools.NotesAccess
+import io.github.gaiser147.claudeoverlay.tools.NotesInk
 import io.github.gaiser147.claudeoverlay.tools.Suggestion
 import io.github.gaiser147.claudeoverlay.notes.LiveTrigger
 import io.github.gaiser147.claudeoverlay.notes.NotesLink
@@ -89,6 +91,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     private lateinit var annotations: AnnotationLayer
     private lateinit var suggestions: SuggestionLayer
     private lateinit var watcher: NotesWatcher
+    /** Claude's handwriting font, for writing into Claude Notes. */
+    private lateinit var cursive: HersheyFont
     private lateinit var mcp: McpHttpServer
 
     /**
@@ -120,12 +124,13 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         annotations = AnnotationLayer(this, this)
         suggestions = SuggestionLayer(
             this, this,
-            accept = { NotesLink.insert(it.text) },
+            accept = ::putIntoNote,
             launch = { work -> safeScope.launch { work() } },
             decided = { s, accepted -> controller.suggestionDecided(s.id, accepted) },
         )
         safeScope.launch { NotesLink.setPin(NotesPin.decode(AppGraph.get(this@OverlayService).settings.notesPin())) }
-        val toolbox = PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
+        cursive = HersheyFont(asset("hershey/scripts.txt"))
+        val toolbox = PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), cursive)
         mcp = McpHttpServer(toolbox)
         controller = ChatController(
             AppGraph.get(this), safeScope, captureWindow, VoiceInput(this), Speaker(this),
@@ -442,6 +447,18 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         override suspend fun showSuggestion(suggestion: Suggestion) = withContext(Dispatchers.Main) {
             suggestions.show(suggestion)
         }
+    }
+
+    /**
+     * The user took a suggestion: by hand (real pen strokes where the preview is, marks
+     * included) when the bridge can, else, or with [typed], as text below the note's content.
+     */
+    private suspend fun putIntoNote(s: Suggestion, typed: Boolean): String? {
+        val ink = s.ink
+        if (typed || ink == null || !NotesLink.status().ink) return NotesLink.insert(s.text)
+        val unit = resources.displayMetrics.density
+        val marks = NotesInk.marks(s.marks.map(Ink(unit)::render), cursive)
+        return NotesLink.addStrokes(ink + marks)
     }
 
     /** A question the user wrote on the Claude Notes page, marked for Claude ("@c …"). */

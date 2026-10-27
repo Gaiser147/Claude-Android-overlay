@@ -87,22 +87,31 @@ class PageGrid private constructor(val cols: Int, val rows: Int, val cellW: Floa
 data class OcrLine(val text: String, val box: Box, val block: Int)
 
 /**
- * Finds a question the user marked for Claude on the page: a line starting with the trigger
- * ("@c", also as read by text recognition from handwriting: "@ c", "©", "(@c"), followed by
- * the question, which may continue on the next lines of the same block.
+ * Finds a question the user marked for Claude on the page: the trigger ("@c", also as
+ * recognition reads it from handwriting: "@ c", "©", "(@c", "@claude") at the start of a word,
+ * followed by the question, which may continue on the next lines of the same block.
  */
 object LiveTrigger {
-    private val MARK = Regex("""^\W{0,2}(?:@\s?[cC](?:laude)?|©)(?![a-zA-Z])\s*[:\-–]?\s*""")
+    private val MARK = Regex("""(?:^|(?<=[\s(\[{"„]))(?:@\s?[cC](?:laude)?|©)(?![a-zA-Z])[\s:\-–]*""")
 
     data class Question(val text: String, val box: Box)
+
+    /** In recognized handwriting (one reading of a batch of strokes that covers [box]). */
+    fun findIn(text: String, box: Box): Question? {
+        val m = MARK.find(text.trim()) ?: return null
+        val question = text.trim().substring(m.range.last + 1).trim()
+        return Question(question, box)
+    }
 
     fun find(lines: List<OcrLine>): Question? {
         val i = lines.indexOfFirst { MARK.containsMatchIn(it.text.trim()) }
         if (i < 0) return null
         val first = lines[i]
         val rest = lines.drop(i + 1).takeWhile { it.block == first.block }
-        val text = (listOf(MARK.replace(first.text.trim(), "")) + rest.map { it.text.trim() })
-            .filter { it.isNotBlank() }.joinToString(" ")
+        val line = first.text.trim()
+        val afterMark = line.substring(MARK.find(line)!!.range.last + 1)
+        val text = (listOf(afterMark) + rest.map { it.text.trim() })
+            .map(String::trim).filter { it.isNotBlank() }.joinToString(" ")
         val all = listOf(first) + rest
         val box = Box(all.minOf { it.box.left }, all.minOf { it.box.top }, all.maxOf { it.box.right }, all.maxOf { it.box.bottom })
         return Question(text, box)

@@ -99,6 +99,8 @@ dependencies {
     implementation(libs.shizuku.provider)
     // On-device text recognition (bundled model, no download) for the live "@c" trigger.
     implementation(libs.mlkit.text.recognition)
+    // Handwriting from the pen strokes the Claude Notes bridge reports (model downloaded once).
+    implementation(libs.mlkit.digital.ink)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)

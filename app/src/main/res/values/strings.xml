@@ -87,4 +87,5 @@
     <string name="notes_live">Live assistant in Claude Notes (@c)</string>
     <string name="suggestion_accept">Insert</string>
     <string name="suggestion_dismiss">Dismiss</string>
+    <string name="suggestion_typed" translatable="false">Aa</string>
 </resources>

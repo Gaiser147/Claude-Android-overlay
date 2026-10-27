@@ -129,24 +129,29 @@ einen eigenen Klon **„Claude Notes“**, der neben dem echten Samsung Notes l�
 Brücke zu Claude Overlay enthält. Dann arbeitet Claude neben dir auf dem Blatt:
 
 - **Frage aufs Blatt schreiben:** Beginne eine handschriftliche Zeile mit **`@c`**, z. B.
-  `@c Was ist die Ableitung von sin(x²)?`. Sobald du kurz absetzt, erkennt das Overlay die Frage
-  **auf dem Gerät** (ML Kit, ohne Claude-Kontingent) und schickt nur dann eine Nachricht mit
-  Screenshot an Claude. Alles ohne `@c` bleibt auf dem Gerät. Ein- und ausschalten im ⋮-Menü
-  des Overlays: „Live-Assistent in Claude Notes (@c)“. Braucht die Bedienungshilfe (Schritt 6).
+  `@c Was ist die Ableitung von sin(x²)?`. Die Brücke meldet deine neuen Striche, und sobald du
+  kurz absetzt, liest ML Kit Digital Ink sie **auf dem Gerät** als Handschrift (Sprachmodell
+  Deutsch, ca. 20 MB, wird beim ersten Mal geladen). Nur bei `@c` geht eine Nachricht mit
+  Screenshot an Claude; alles andere bleibt auf dem Gerät. Ein- und ausschalten im ⋮-Menü:
+  „Live-Assistent in Claude Notes (@c)“. Mit einer älteren Brücke liest das Overlay stattdessen
+  den Bildschirm (Bedienungshilfe nötig, weniger zuverlässig).
 - **Antwort als Vorschau:** Claude antwortet direkt an der Frage in blauer Handschrift, auf Wunsch
-  mit Markierungen, und darunter erscheinen **✓ Übernehmen** und **✗**. Erst ✓ schreibt den Text
-  (als Markdown, also mit Überschriften und Listen) **live in die offene Notiz**, unter ihren
-  bisherigen Inhalt. Claude erfährt deine Wahl mit deiner nächsten Nachricht.
+  mit Markierungen. Darunter: **✓ Übernehmen** schreibt die Antwort samt Markierungen **von Hand
+  in die Notiz**, als echte Notes-Striche genau dort (ein Rückgängig-Schritt, ohne Shizuku);
+  **Aa** fügt sie als getippten Text (Markdown → Überschriften, Listen) unter den Inhalt ein;
+  **✗** verwirft sie. Claude erfährt deine Wahl mit deiner nächsten Nachricht.
 - **Auch im Chat:** „Schreib eine Einkaufsliste in die Notiz“ funktioniert ebenso; Claude nutzt
-  dafür die Tools `notes_suggest`, `notes_insert`, `notes_read` und `notes_status`.
+  dafür `notes_suggest`, `notes_write` (Handschrift), `notes_insert` (Text), `notes_read` und
+  `notes_status`.
 
 **Koppeln:** Öffnest du im Klon zum ersten Mal eine Notiz, fragt Claude Overlay per
 Benachrichtigung „Claude Notes koppeln?“. Danach vertraut es genau diesem Klon (Paketname und
 Signaturzertifikat). Ein mit anderem Schlüssel signierter Klon muss neu gekoppelt werden.
 
-Grenzen: Eingefügt wird unter den vorhandenen Inhalt, nicht an der Cursorposition. Markierungen
-bleiben Vorschau und werden nicht Teil der Notiz. `notes_read` liefert nur gespeicherten,
-getippten Text; Handschrift liest Claude aus dem Screenshot.
+Grenzen: Getippter Text (Aa) landet unter dem vorhandenen Inhalt, nicht an der Cursorposition.
+Claudes Handschrift nutzt die Hershey-Schrift (lateinische Buchstaben, Ziffern, Griechisch,
+gängige Mathe-Zeichen); kann sie ein Zeichen nicht, bleibt nur Aa. `notes_read` liefert nur
+gespeicherten, getippten Text; Handschrift liest Claude aus dem Screenshot.
 
 ## Wenn das Overlay verschwindet oder du dich neu anmelden musst
 
