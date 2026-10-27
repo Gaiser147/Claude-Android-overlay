@@ -15,7 +15,8 @@ import java.util.List;
  * The open note editor as the bridge reaches it, through the classes Notes itself uses: the
  * note document (SpenWNote with its pages), the editor view (SpenComposer) and its zoom
  * scroller, which converts between view pixels and the document's content coordinates. Every
- * call is reflection on {@link Symbols}; call on the main thread.
+ * call is reflection on {@link Symbols}; call on the main thread. Method names are the
+ * bytecode's: jadx shows some getters under other names ("renamed from" in its output).
  */
 final class Editor {
     final Object note;
@@ -38,7 +39,10 @@ final class Editor {
         View spen = (View) invoke(composerView, "getComposerView");
         Object presenter = invoke(composerView, "getPresenter");
         if (spen == null || presenter == null) return null;
-        Object note = invoke(presenter, "getMSpenWNote");
+        // The presenter's getter for the note is named getDoc in the bytecode (jadx shows it as
+        // getMSpenWNote); fall back to its field of that type.
+        Object note = invokeOrNull(presenter, "getDoc");
+        if (note == null) note = fieldOfType(presenter, Symbols.SPEN_WNOTE);
         Object scroller = invoke(spen, "getNoteZoomScroller");
         return note == null || scroller == null ? null : new Editor(note, spen, scroller);
     }
@@ -154,6 +158,14 @@ final class Editor {
         Method m = findMethod(target.getClass(), name, types);
         m.setAccessible(true);
         return m.invoke(target, args);
+    }
+
+    private static Object invokeOrNull(Object target, String name) {
+        try {
+            return invoke(target, name);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
     }
 
     private static Method findMethod(Class<?> c, String name, Class<?>[] types) throws NoSuchMethodException {

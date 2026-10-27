@@ -20,8 +20,10 @@ final class Symbols {
 
     /** The note editor fragment; it holds the editor view (a field of type COMPOSER_VIEW). */
     static final String BASE_COMPOSER_FRAGMENT = "com.samsung.android.support.senl.nt.composer.main.base.view.BaseComposerFragment";
-    /** getComposerView() → SpenComposer (getNoteZoomScroller()); getPresenter() → getMSpenWNote(). */
+    /** getComposerView() → SpenComposer (getNoteZoomScroller()); getPresenter() → getDoc(). */
     static final String COMPOSER_VIEW = "com.samsung.android.support.senl.nt.composer.main.base.view.composer.ComposerView";
+    /** The note document (pages, history). */
+    static final String SPEN_WNOTE = "com.samsung.android.sdk.pen.worddoc.SpenWNote";
     /** A pen stroke: new SpenObjectStroke(penName, PointF[], float[] pressures, int[] timestamps). */
     static final String SPEN_STROKE = "com.samsung.android.sdk.pen.document.SpenObjectStroke";
     /** Pens Claude writes with when the user hasn't drawn anything to copy the pen from. */
