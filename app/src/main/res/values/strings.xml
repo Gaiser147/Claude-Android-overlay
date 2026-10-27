@@ -79,4 +79,12 @@
     <string name="effort_max">Max</string>
     <string name="effort_hint">More effort: Claude thinks longer and more thoroughly, but answers more slowly and uses more of your plan\'s limits. Auto uses the model\'s default.</string>
     <string name="effort_capped">%1$s isn\'t available for this model; Claude uses the closest level.</string>
+    <string name="notes_channel">Claude Notes</string>
+    <string name="notes_pair_title">Pair Claude Notes?</string>
+    <string name="notes_pair_text">%1$s wants to let Claude write into your notes. Certificate %2$s. Only pair the Notes clone you built yourself.</string>
+    <string name="notes_pair">Pair</string>
+    <string name="notes_decline">Decline</string>
+    <string name="notes_live">Live assistant in Claude Notes (@c)</string>
+    <string name="suggestion_accept">Insert</string>
+    <string name="suggestion_dismiss">Dismiss</string>
 </resources>

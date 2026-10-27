@@ -49,6 +49,13 @@ import io.github.gaiser147.claudeoverlay.tools.InputKind
 import io.github.gaiser147.claudeoverlay.tools.PenState
 import io.github.gaiser147.claudeoverlay.tools.ScreenSnapshot
 import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
+import io.github.gaiser147.claudeoverlay.tools.NotesAccess
+import io.github.gaiser147.claudeoverlay.tools.Suggestion
+import io.github.gaiser147.claudeoverlay.notes.LiveTrigger
+import io.github.gaiser147.claudeoverlay.notes.NotesLink
+import io.github.gaiser147.claudeoverlay.notes.NotesWatcher
+import io.github.gaiser147.claudeoverlay.tools.Box
+import io.github.gaiser147.claudeoverlay.notes.NotesPin
 import io.github.gaiser147.claudeoverlay.tools.PhoneHost
 import io.github.gaiser147.claudeoverlay.tools.PhoneToolbox
 import io.github.gaiser147.claudeoverlay.tools.Stroke
@@ -80,6 +87,8 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     lateinit var controller: ChatController
         private set
     private lateinit var annotations: AnnotationLayer
+    private lateinit var suggestions: SuggestionLayer
+    private lateinit var watcher: NotesWatcher
     private lateinit var mcp: McpHttpServer
 
     /**
@@ -109,6 +118,13 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         current = this
         wm = getSystemService(WindowManager::class.java)
         annotations = AnnotationLayer(this, this)
+        suggestions = SuggestionLayer(
+            this, this,
+            accept = { NotesLink.insert(it.text) },
+            launch = { work -> safeScope.launch { work() } },
+            decided = { s, accepted -> controller.suggestionDecided(s.id, accepted) },
+        )
+        safeScope.launch { NotesLink.setPin(NotesPin.decode(AppGraph.get(this@OverlayService).settings.notesPin())) }
         val toolbox = PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
         mcp = McpHttpServer(toolbox)
         controller = ChatController(
@@ -117,6 +133,13 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             onNewTurn = ::clearDrawings,
             onShotSent = { toolbox.noteScreenshot(it.width, it.height) },
         )
+        watcher = NotesWatcher(
+            safeScope,
+            enabled = { controller.state.value.notesLive },
+            ownWindows = ::ownWindows,
+            isBusy = { controller.state.value.busy },
+            ask = ::askFromPage,
+        ).also { it.start() }
         val (sw, sh) = screenSize()
         bubbleX = sw - dp(BUBBLE_DP) - dp(8)
         bubbleY = (sh * 0.35f).roundToInt()
@@ -176,9 +199,11 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     }
 
     override fun onDestroy() {
+        watcher.stop()
         controller.close()
         mcp.close()
         annotations.clear()
+        suggestions.clear()
         runCatching { wm.removeView(root) }
         if (current === this) current = null
         super.onDestroy()
@@ -304,6 +329,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             params.alpha = if (hidden) 0f else 1f
             update()
             if (!keepDrawings) annotations.setHidden(hidden)
+            suggestions.setHidden(hidden, keepPreviews = keepDrawings)
         }
     }
 
@@ -324,6 +350,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         update()
         annotations.setHidden(aside)
+        suggestions.setHidden(aside)
         if (aside) delay(INPUT_SETTLE_MS)
     }
 
@@ -409,6 +436,30 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             match.first
         }
+
+        override fun notes(): NotesAccess? = NotesLink.takeIf { it.known }
+
+        override suspend fun showSuggestion(suggestion: Suggestion) = withContext(Dispatchers.Main) {
+            suggestions.show(suggestion)
+        }
+    }
+
+    /** A question the user wrote on the Claude Notes page, marked for Claude ("@c …"). */
+    private fun askFromPage(question: LiveTrigger.Question) {
+        controller.send("✍️ ${question.text}", aboutShot = { shot ->
+            NotesWatcher.message(question, shot?.let { it.width to it.height }, screenSize())
+        })
+    }
+
+    /** The overlay's own windows on screen: the orb or panel, and Claude's suggestions. */
+    private fun ownWindows(): List<Box> {
+        val own = mutableListOf<Box>()
+        if (root.isAttachedToWindow) {
+            val loc = IntArray(2)
+            root.getLocationOnScreen(loc)
+            own += Box(loc[0], loc[1], loc[0] + root.width, loc[1] + root.height)
+        }
+        return own + suggestions.areas()
     }
 
     /** Launchable apps as (label, package). */

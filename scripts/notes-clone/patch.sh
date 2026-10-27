@@ -9,8 +9,9 @@
 #   1. apktool-Dekodierung (oder nutzt eine vorhandene via --decoded)
 #   2. benennt applicationId + alle Provider-Authorities eindeutig um (grenzsicher;
 #      der interne senl-Klassen-Namensraum bleibt unberührt)
-#   3. legt eine Bootstrap-Klasse ab und ruft sie in MemoApplication.onCreate() auf
-#   4. baut das APK neu (apktool b)
+#   3. ruft in MemoApplication.onCreate() Bootstrap.start() auf: mit --bridge die echte
+#      Claude-Brücke (notesbridge.dex, ./gradlew :notesbridge:bridgeDex), sonst einen Log-Stub
+#   4. baut das APK neu (apktool b) und legt die Brücke als nächstes classesN.dex dazu
 #   5. zeigt die Schritte zum Ausrichten, Signieren und Installieren auf dem Gerät
 #
 # Voraussetzungen: java, apktool (Pfad via APKTOOL=…/apktool.jar). Zum Signieren auf
@@ -24,13 +25,14 @@ LABEL="${LABEL:-Claude Notes}"
 APKTOOL="${APKTOOL:-apktool}"           # z. B. APKTOOL="java -jar /pfad/apktool.jar"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-usage() { echo "Benutzung: $0 <notes.apk> [--decoded <dir>] [--out <klon.apk>]"; exit 1; }
+usage() { echo "Benutzung: $0 <notes.apk> [--decoded <dir>] [--out <klon.apk>] [--bridge <notesbridge.dex>]"; exit 1; }
 
-APK=""; DECODED=""; OUT="notesclaude-unsigned.apk"
+APK=""; DECODED=""; OUT="notesclaude-unsigned.apk"; BRIDGE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --decoded) DECODED="$2"; shift 2;;
     --out) OUT="$2"; shift 2;;
+    --bridge) BRIDGE="$2"; shift 2;;
     -h|--help) usage;;
     *) APK="$1"; shift;;
   esac
@@ -57,10 +59,19 @@ python3 -I "$HERE/rename.py" "$WORK" "$OLD_ID" "$NEW_ID" "$LABEL"
 echo ">> Prüfe, dass jede Komponenten-Klasse im Manifest im smali existiert"
 python3 -I "$HERE/check_components.py" "$WORK"
 
-echo ">> Lege Bootstrap-Klasse ab (classes.dex = smali/)"
-mkdir -p "$WORK/smali/io/github/gaiser147/notesbridge"
-cp "$HERE/smali/io/github/gaiser147/notesbridge/Bootstrap.smali" \
-   "$WORK/smali/io/github/gaiser147/notesbridge/Bootstrap.smali"
+STUB="$WORK/smali/io/github/gaiser147/notesbridge/Bootstrap.smali"
+if [ -n "$BRIDGE" ]; then
+  [ -f "$BRIDGE" ] || { echo "Brücke $BRIDGE fehlt (./gradlew :notesbridge:bridgeDex)"; exit 1; }
+  # Die echte Bootstrap-Klasse kommt aus notesbridge.dex; ein Stub in classes.dex würde sie
+  # verdecken (Android nimmt die erste gefundene Klasse).
+  rm -f "$STUB"
+  echo ">> Erlaube dem Klon, das Claude-Overlay zu sehen (<queries>)"
+  python3 -I "$HERE/bridge.py" queries "$WORK" "io.github.gaiser147.claudeoverlay"
+else
+  echo ">> Lege Bootstrap-Stub ab (classes.dex = smali/; ohne --bridge nur ein Log)"
+  mkdir -p "$(dirname "$STUB")"
+  cp "$HERE/smali/io/github/gaiser147/notesbridge/Bootstrap.smali" "$STUB"
+fi
 
 echo ">> Hänge Bootstrap-Aufruf in MemoApplication.onCreate() ein"
 MEMOAPP="$(grep -rl 'onCreate()V' "$WORK"/smali*/com/samsung/android/app/notes/MemoApplication.smali | head -1)"
@@ -83,6 +94,11 @@ fi
 
 echo ">> Baue APK neu → $OUT"
 $APKTOOL b "$WORK" -o "$OUT"
+
+if [ -n "$BRIDGE" ]; then
+  echo ">> Füge die Claude-Brücke hinzu"
+  python3 -I "$HERE/bridge.py" add-dex "$OUT" "$BRIDGE"
+fi
 
 cat <<EOF
 

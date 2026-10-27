@@ -46,6 +46,8 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     private val readAloudKey = booleanPreferencesKey("read_aloud")
     private val controlKey = booleanPreferencesKey("phone_control")
     private val effortKey = stringPreferencesKey("effort")
+    private val notesPinKey = stringPreferencesKey("notes_pin")
+    private val notesLiveKey = booleanPreferencesKey("notes_live")
 
     val model: Flow<String> = store.data.map { it[modelKey] ?: ClaudeSession.DEFAULT_MODEL }
     val screenshots: Flow<Boolean> = store.data.map { it[screenshotsKey] ?: true }
@@ -65,6 +67,16 @@ class OverlaySettings(private val store: androidx.datastore.core.DataStore<Prefe
     /** Whether Claude may operate the phone (tap, type, open apps). Off until the user opts in. */
     suspend fun controlAllowed(): Boolean = store.data.first()[controlKey] ?: false
     suspend fun setControlAllowed(value: Boolean) = store.edit { it[controlKey] = value }
+
+    /** The paired Claude Notes clone, or null before the first pairing. */
+    suspend fun notesPin(): String? = store.data.first()[notesPinKey]
+    suspend fun setNotesPin(value: String?) = store.edit {
+        if (value == null) it.remove(notesPinKey) else it[notesPinKey] = value
+    }
+
+    /** Watch the Claude Notes page for questions marked with the trigger ("@c"). */
+    suspend fun notesLive(): Boolean = store.data.first()[notesLiveKey] ?: true
+    suspend fun setNotesLive(value: Boolean) = store.edit { it[notesLiveKey] = value }
 
     suspend fun setModels(models: List<ModelInfo>) = store.edit { it[modelsKey] = ModelInfo.toJson(models) }
 

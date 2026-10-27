@@ -27,6 +27,8 @@
         </intent>
         <!-- Shizuku, for real stylus input (optional). -->
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- The Claude Notes clone (scripts/notes-clone), to check who connects to NotesLinkService. -->
+        <package android:name="io.github.gaiser147.notesclaude" />
     </queries>
 
     <application
@@ -66,6 +68,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Floating assistant window that keeps the local Claude Code CLI process running" />
         </service>
+        <!-- The bridge inside the Claude Notes clone binds here. Exported: every caller is
+             checked against the clone the user paired (NotesPairing). -->
+        <service
+            android:name=".notes.NotesLinkService"
+            android:exported="true"
+            tools:ignore="ExportedService" />
         <service
             android:name=".access.ControlService"
             android:exported="false"

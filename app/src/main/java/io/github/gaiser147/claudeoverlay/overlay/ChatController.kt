@@ -73,6 +73,8 @@ data class ChatUiState(
     val controlAllowed: Boolean = false,
     /** Claude's drawings are on the screen. */
     val drawingsShown: Boolean = false,
+    /** Watch Claude Notes pages for questions marked "@c". */
+    val notesLive: Boolean = true,
 )
 
 /**
@@ -115,6 +117,8 @@ class ChatController(
     /** That retry was already spent for the current failure (no reconnect loops). */
     private var authRecovered = false
     private var restarting = false
+    /** Page events (suggestions taken or dismissed) for Claude, sent with the next message. */
+    private val pageEvents = mutableListOf<String>()
 
     init {
         scope.launch {
@@ -132,6 +136,7 @@ class ChatController(
                     resumableSession = graph.settings.lastSession(),
                     readAloud = graph.settings.readAloud(),
                     controlAllowed = graph.settings.controlAllowed(),
+                    notesLive = graph.settings.notesLive(),
                 )
             }
             when {
@@ -224,6 +229,11 @@ class ChatController(
         }
     }
 
+    fun setNotesLive(on: Boolean) {
+        _state.update { it.copy(notesLive = on) }
+        scope.launch { graph.settings.setNotesLive(on) }
+    }
+
     fun setDrawingsShown(shown: Boolean) = _state.update { it.copy(drawingsShown = shown) }
 
     /** A screenshot for the phone tools: always taken, whatever the screenshot toggle says. */
@@ -264,7 +274,11 @@ class ChatController(
         })
     }
 
-    fun send(text: String, spoken: Boolean = false) {
+    /**
+     * Sends [text] with the screen. [aboutShot] adds words that depend on the screenshot that
+     * goes along (e.g. where something is, in its pixels); it forces a screenshot.
+     */
+    fun send(text: String, spoken: Boolean = false, aboutShot: ((Shot?) -> String?)? = null) {
         val s = _state.value
         if (s.busy) return
         val files = pending.toList()
@@ -276,12 +290,18 @@ class ChatController(
         chunker = SentenceChunker()
         onNewTurn()
         _state.update { it.copy(busy = true, resumableSession = null, draft = "") }
+        val events = pageEvents.toList().also { pageEvents.clear() }
         scope.launch {
-            val shot = if (s.screenshots) takeShot() else null
+            val shot = if (s.screenshots || aboutShot != null) takeShot() else null
             val unchanged = shot != null && ShotFingerprint.sameScreen(shot.fingerprint, lastSentFingerprint)
+            val outgoing = listOfNotNull(
+                text.takeIf { it.isNotBlank() },
+                aboutShot?.invoke(shot),
+                events.takeIf { it.isNotEmpty() }?.let { "[On the page since your last reply: ${it.joinToString("; ")}]" },
+            ).joinToString("\n\n")
             val built = withContext(Dispatchers.Default) {
                 UserMessage.build(
-                    text, if (unchanged) null else shot?.attachment, unchanged, files,
+                    outgoing, if (unchanged) null else shot?.attachment, unchanged, files,
                     screenshotSize = shot?.let { it.width to it.height },
                 )
             }
@@ -314,6 +334,15 @@ class ChatController(
                 _state.update { it.copy(busy = false) }
             }
         }
+    }
+
+    /**
+     * The user took (✓) or dismissed (✗) one of Claude's suggestions on the notes page. Claude
+     * hears it with the next message rather than in a turn of its own, which would cost a reply.
+     */
+    fun suggestionDecided(id: Int, accepted: Boolean) {
+        pageEvents += "suggestion #$id " + if (accepted) "inserted into the note (✓)" else "dismissed (✗)"
+        notice(if (accepted) "✓ Suggestion #$id inserted into the note" else "✗ Suggestion #$id dismissed", false)
     }
 
     fun stop() {

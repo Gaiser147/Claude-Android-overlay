@@ -77,4 +77,12 @@
     <string name="effort_max">Max</string>
     <string name="effort_hint">Mehr Effort: Claude denkt länger und gründlicher nach, antwortet aber langsamer und verbraucht mehr von deinem Kontingent. Auto nutzt die Standardstufe des Modells.</string>
     <string name="effort_capped">%1$s gibt es für dieses Modell nicht; Claude nutzt die nächstliegende Stufe.</string>
+    <string name="notes_channel">Claude Notes</string>
+    <string name="notes_pair_title">Claude Notes koppeln?</string>
+    <string name="notes_pair_text">%1$s möchte Claude in deine Notizen schreiben lassen. Zertifikat %2$s. Koppel nur den Notes-Klon, den du selbst gebaut hast.</string>
+    <string name="notes_pair">Koppeln</string>
+    <string name="notes_decline">Ablehnen</string>
+    <string name="notes_live">Live-Assistent in Claude Notes (@c)</string>
+    <string name="suggestion_accept">Übernehmen</string>
+    <string name="suggestion_dismiss">Verwerfen</string>
 </resources>

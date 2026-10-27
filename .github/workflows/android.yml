@@ -14,12 +14,16 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests, lint, debug APK
-        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Unit tests, lint, debug APK, Claude Notes bridge
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug :notesbridge:bridgeDex
       - uses: actions/upload-artifact@v4
         with:
           name: claude-overlay-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notesbridge-dex
+          path: notesbridge/build/outputs/dex/notesbridge.dex
       - uses: actions/upload-artifact@v4
         if: always()
         with:

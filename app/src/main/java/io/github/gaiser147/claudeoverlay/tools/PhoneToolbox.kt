@@ -43,6 +43,11 @@ interface PhoneHost {
     fun listApps(): List<Pair<String, String>>
     /** Opens the best match for [query] (label or package); returns what was opened, or null. */
     suspend fun openApp(query: String): String?
+
+    /** The Claude Notes clone, or null while none was ever paired. */
+    fun notes(): NotesAccess? = null
+    /** Shows a suggestion's preview and its ✓/✗ buttons over the page. */
+    suspend fun showSuggestion(suggestion: Suggestion) {}
 }
 
 /** How a gesture reached the app: as a finger (accessibility) or as a pen (Shizuku). */
@@ -71,6 +76,7 @@ class PhoneToolbox(
     @Volatile private var elements: List<Pt> = emptyList()
     /** The pen worked earlier: the app on screen likely draws only with it. */
     @Volatile private var penWorked = false
+    private val notes = NotesTools(host)
 
     override fun definitions(): List<JsonObject> = DEFINITIONS
 
@@ -119,8 +125,10 @@ class PhoneToolbox(
                 val key = arguments.str("key")
                 if (!host.pressKey(key)) ToolResult.text("Unknown key '$key'.", true) else act("Pressed $key", arguments) {}
             }
-            else -> ToolResult.text("Unknown tool $name", true)
+            else -> notes.call(name, arguments, ::geometry) ?: ToolResult.text("Unknown tool $name", true)
         }
+    } catch (e: NotesTools.NotesArgs) {
+        ToolResult.text(e.message ?: "Bad arguments", true)
     } catch (e: BadArgs) {
         ToolResult.text(e.message ?: "Bad arguments", true)
     } catch (e: AnnotationParser.Invalid) {
@@ -367,12 +375,30 @@ class PhoneToolbox(
         private const val POINT = """{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2,"description":"[x, y] in screenshot pixels"}"""
         private const val COLOR = """{"type":"string","description":"red, orange, yellow, green, blue, purple, pink, black, gray or #RRGGBB (default: red-orange pen; highlights default to yellow)"}"""
 
+        /** draw_annotations' shapes; notes_suggest takes the same for its marks. */
+        private const val SHAPES = """{"type":"array","items":{"type":"object","required":["type"],"properties":{
+                    "type":{"type":"string","enum":["circle","box","underline","highlight","strike","arrow","check","cross","dot","text","path","svg"],
+                      "description":"circle/box/underline/highlight/strike: around; arrow: from, to [, bend -1..1]; check/cross/dot: at [, size]; text: at (top-left of the text), text [, size, font]; circle may also use center + radius; path: points; svg: d [, x, y, scale]"},
+                    "around":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4,"description":"[left, top, right, bottom] of the thing to mark, in screenshot pixels"},
+                    "center":$POINT,"radius":$XY,"at":$POINT,"from":$POINT,"to":$POINT,
+                    "bend":{"type":"number","description":"arrow curvature, -1..1 (0 = straight)"},
+                    "size":{"type":"number","description":"check/cross/dot size or text letter height, screenshot pixels"},
+                    "wavy":{"type":"boolean","description":"wavy underline"},
+                    "text":{"type":"string"},
+                    "font":{"type":"string","enum":["handwriting","print"],"description":"text style (default handwriting)"},
+                    "thickness":{"type":"number","description":"pen width: 0.5 fine … 1 normal … 2 marker … 3 bold"},
+                    "points":{"type":"array","items":$POINT},
+                    "d":{"type":"string","description":"SVG path data in screenshot pixels (M L H V C S Q T A Z)"},
+                    "x":{"type":"number"},"y":{"type":"number"},"scale":{"type":"number"},
+                    "label":{"type":"string","description":"short handwritten caption placed next to the mark"},
+                    "color":$COLOR}}}"""
+
         private fun tool(name: String, description: String, schema: String): JsonObject =
             Json.parseToJsonElement(
                 """{"name":"$name","description":${JsonPrimitive(description)},"inputSchema":$schema}"""
             ).jsonObject
 
-        private val DEFINITIONS = listOf(
+        private val DEFINITIONS = NotesTools.definitions(::tool, SHAPES) + listOf(
             tool(
                 "read_screen",
                 "Read the user's screen as text from the accessibility tree: the app, then one line per element — " +
@@ -399,22 +425,7 @@ class PhoneToolbox(
                     "circle, box, highlight or underline to it. The result is a screenshot WITH your marks: check them.",
                 """{"type":"object","required":["shapes"],"properties":{
                   "clear_previous":{"type":"boolean","description":"remove earlier drawings first (default true)"},
-                  "shapes":{"type":"array","items":{"type":"object","required":["type"],"properties":{
-                    "type":{"type":"string","enum":["circle","box","underline","highlight","strike","arrow","check","cross","dot","text","path","svg"],
-                      "description":"circle/box/underline/highlight/strike: around; arrow: from, to [, bend -1..1]; check/cross/dot: at [, size]; text: at (top-left of the text), text [, size, font]; circle may also use center + radius; path: points; svg: d [, x, y, scale]"},
-                    "around":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4,"description":"[left, top, right, bottom] of the thing to mark, in screenshot pixels"},
-                    "center":$POINT,"radius":$XY,"at":$POINT,"from":$POINT,"to":$POINT,
-                    "bend":{"type":"number","description":"arrow curvature, -1..1 (0 = straight)"},
-                    "size":{"type":"number","description":"check/cross/dot size or text letter height, screenshot pixels"},
-                    "wavy":{"type":"boolean","description":"wavy underline"},
-                    "text":{"type":"string"},
-                    "font":{"type":"string","enum":["handwriting","print"],"description":"text style (default handwriting)"},
-                    "thickness":{"type":"number","description":"pen width: 0.5 fine … 1 normal … 2 marker … 3 bold"},
-                    "points":{"type":"array","items":$POINT},
-                    "d":{"type":"string","description":"SVG path data in screenshot pixels (M L H V C S Q T A Z)"},
-                    "x":{"type":"number"},"y":{"type":"number"},"scale":{"type":"number"},
-                    "label":{"type":"string","description":"short handwritten caption placed next to the mark"},
-                    "color":$COLOR}}}}}""",
+                  "shapes":$SHAPES}}""",
             ),
             tool("clear_annotations", "Remove everything drawn with draw_annotations.", """{"type":"object","properties":{}}"""),
             tool("list_apps", "List the launchable apps on the phone as 'Label (package)'. Requires phone control.", """{"type":"object","properties":{}}"""),

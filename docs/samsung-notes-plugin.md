@@ -8,6 +8,12 @@ und **live neben dir** mitlesen und Tipps geben.
 > **Update:** Der Klon-Patcher-Weg wurde untersucht und als machbar bestätigt — siehe
 > [Abschnitt „Klon-Patcher“](#klon-patcher-eigenstandiges-claude-notes) und
 > `scripts/notes-clone/`.
+>
+> **Update 2:** Die In-Prozess-Brücke ist gebaut (`notesbridge/`, `patch.sh --bridge`). Am APK
+> bestätigt: Das Live-Einfügen ist ein `ACTION_SEND` an die `ComposerActivity` (singleTop) mit
+> `BixbyAction=AddContentToEditingNote` und `AI_ACTION_UPDATE_EDITING_NOTE=true` (Bixbys
+> `UpdateAsync`, `NoteFunctions.updateNote`); `TaskActionSend` wählt dafür
+> `ActionSendHelperAppFunction`. Alle verwendeten Namen: `notesbridge/…/Symbols.java`.
 
 ## Kurzfassung
 
