@@ -54,6 +54,9 @@ echo ">> Benenne package + Authorities + app-eigene Permissions um (klassensiche
 # Code weiter com.samsung.android.app.notes.*). Macht rename.py exakt (quoted-string).
 python3 -I "$HERE/rename.py" "$WORK" "$OLD_ID" "$NEW_ID" "$LABEL"
 
+echo ">> Prüfe, dass jede Komponenten-Klasse im Manifest im smali existiert"
+python3 -I "$HERE/check_components.py" "$WORK"
+
 echo ">> Lege Bootstrap-Klasse ab (classes.dex = smali/)"
 mkdir -p "$WORK/smali/io/github/gaiser147/notesbridge"
 cp "$HERE/smali/io/github/gaiser147/notesbridge/Bootstrap.smali" \
