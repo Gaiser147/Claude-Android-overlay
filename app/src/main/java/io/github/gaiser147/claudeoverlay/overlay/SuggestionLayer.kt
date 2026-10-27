@@ -43,14 +43,15 @@ import kotlin.math.roundToInt
 
 /**
  * Claude's suggestions over the Claude Notes page: each one's preview (its own drawing layer,
- * so it stays when Claude's other drawings are cleared) and a small ✓/✗ bar below it. ✓ hands
- * the text to [accept]; the suggestion goes away once that succeeds, or on ✗.
+ * so it stays when Claude's other drawings are cleared) and a small ✓/Aa/✗ bar below it. ✓
+ * writes it into the note by hand, Aa as typed text ([accept]); the suggestion goes away once
+ * that succeeds, or on ✗.
  */
 class SuggestionLayer(
     private val context: Context,
     private val owner: Any,
-    /** Inserts the text into the note; returns an error message, or null when it worked. */
-    private val accept: suspend (Suggestion) -> String?,
+    /** Puts it into the note, by hand or ([typed]) as text; returns an error, or null when it worked. */
+    private val accept: suspend (Suggestion, typed: Boolean) -> String?,
     /** Runs [accept] off the click (the service's scope). */
     private val launch: (suspend () -> Unit) -> Unit,
     /** The user decided: ✓ worked (true) or ✗ (false). */
@@ -153,21 +154,25 @@ class SuggestionLayer(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     val blue = Color(Suggestion.PREVIEW_COLOR)
-                    TextButton(enabled = !busy, onClick = {
+                    fun take(typed: Boolean) {
                         busy = true
                         error = null
                         launch {
-                            val failed = accept(suggestion)
+                            val failed = accept(suggestion, typed)
                             busy = false
                             if (failed == null) {
                                 shown.firstOrNull { it.bar === view }?.let(::remove)
                                 decided(suggestion, true)
                             } else error = failed
                         }
-                    }) {
+                    }
+                    TextButton(enabled = !busy, onClick = { take(typed = false) }) {
                         if (busy) CircularProgressIndicator(Modifier.padding(end = 6.dp).size(16.dp), color = blue, strokeWidth = 2.dp)
                         else Icon(Icons.Default.Check, null, tint = blue)
                         Text(stringResource(R.string.suggestion_accept), color = blue, fontSize = 13.sp)
+                    }
+                    TextButton(enabled = !busy, onClick = { take(typed = true) }) {
+                        Text(stringResource(R.string.suggestion_typed), color = blue, fontSize = 13.sp)
                     }
                     TextButton(enabled = !busy, onClick = {
                         shown.firstOrNull { it.bar === view }?.let(::remove)
@@ -184,6 +189,6 @@ class SuggestionLayer(
 
     private companion object {
         /** About how wide the ✓/✗ bar is. */
-        const val BAR_WIDTH_DP = 180
+        const val BAR_WIDTH_DP = 240
     }
 }

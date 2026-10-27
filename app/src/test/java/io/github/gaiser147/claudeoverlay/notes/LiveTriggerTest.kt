@@ -55,4 +55,24 @@ class LiveTriggerTest {
         assertTrue(m, m.contains("notes_suggest"))
         assertTrue(NotesWatcher.message(q, null, 2000 to 3200).contains("Was ist 17·23?"))
     }
+
+    @Test
+    fun `handwriting read from strokes triggers anywhere it starts a word`() {
+        val box = Box(1, 2, 3, 4)
+        assertEquals(LiveTrigger.Question("Was ist 17·23?", box), LiveTrigger.findIn("@c Was ist 17·23?", box))
+        assertEquals("wie geht das", LiveTrigger.findIn("Aufgabe 2 @C wie geht das", box)?.text)
+        assertNull(LiveTrigger.findIn("schreib an anna@cloud.de", box))
+        assertNull(LiveTrigger.findIn("Einkaufsliste Milch", box))
+    }
+
+    @Test
+    fun `strokes from the bridge are parsed`() {
+        val reply = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"strokes":[{"id":7,"points":[[1,2],[3,4]],"t":[0,8]},{"id":8,"points":[]}]}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val s = NotesLink.parseStrokes(reply)
+        assertEquals(1, s.size)
+        assertEquals(7, s[0].id)
+        assertEquals(listOf(0L, 8L), s[0].times)
+    }
 }

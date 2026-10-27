@@ -6,8 +6,9 @@
       bridge can bind to it: adds <package> to the manifest's <queries>.
 
   bridge.py add-dex <apk> <dex>
-      Adds the bridge to the built APK as the next classesN.dex. Android loads
-      classes.dex, classes2.dex, … in order, so the number must follow the last one.
+      Adds the bridge to the built APK as the next classesN.dex (Android loads
+      classes.dex, classes2.dex, … in order, so the number must follow the last one), or
+      replaces the bridge an earlier run added.
 
 Usage as above; both steps are idempotent.
 """
@@ -36,26 +37,39 @@ def queries(work: str, overlay: str) -> int:
     return 0
 
 
+BRIDGE_CLASS = b"Lio/github/gaiser147/notesbridge/Bootstrap;"
+
+
 def add_dex(apk: str, dex: str) -> int:
     with open(dex, "rb") as fh:
         payload = fh.read()
+    target = None
     with zipfile.ZipFile(apk) as z:
         names = z.namelist()
         for n in names:
-            if re.fullmatch(r"classes\d*\.dex", n) and z.read(n) == payload:
+            if not re.fullmatch(r"classes\d*\.dex", n):
+                continue
+            data = z.read(n)
+            if data == payload:
                 print("add-dex: already in as", n)
                 return 0
-    numbers = [int(m.group(1) or 1) for n in names for m in [re.fullmatch(r"classes(\d*)\.dex", n)] if m]
-    target = "classes%d.dex" % (max(numbers) + 1)
+            # An older bridge from an earlier run: replace it, never add a second copy (Android
+            # would load the first one it finds).
+            if len(data) < 1_000_000 and BRIDGE_CLASS in data:
+                target = n
+    if target is None:
+        numbers = [int(m.group(1) or 1) for n in names for m in [re.fullmatch(r"classes(\d*)\.dex", n)] if m]
+        target = "classes%d.dex" % (max(numbers) + 1)
     # Rewrite instead of appending: an APK with an entry added after the signing block or with
     # a stale central directory is rejected by the installer.
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".apk").name
     with zipfile.ZipFile(apk) as src, zipfile.ZipFile(tmp, "w") as out:
         for info in src.infolist():
-            out.writestr(info, src.read(info.filename))
+            if info.filename != target:
+                out.writestr(info, src.read(info.filename))
         out.writestr(zipfile.ZipInfo(target), payload, compress_type=zipfile.ZIP_DEFLATED)
     shutil.move(tmp, apk)
-    print("add-dex: added as", target)
+    print("add-dex: bridge is", target)
     return 0
 
 

@@ -13,6 +13,7 @@ markdown = "0.37.0"
 junit = "4.13.2"
 shizuku = "13.1.5"
 mlkitText = "16.0.1"
+mlkitInk = "19.0.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +38,7 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
 shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitText" }
+mlkit-digital-ink = { group = "com.google.mlkit", name = "digital-ink-recognition", version.ref = "mlkitInk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

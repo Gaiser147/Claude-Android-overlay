@@ -15,6 +15,7 @@ private fun font(name: String) = HersheyFont(File("src/main/assets/hershey/$name
 /** A phone with a Claude Notes clone in a given state. */
 private class NotesHost(var notesStatus: NotesStatus?) : PhoneHost by FakeHost() {
     val inserted = mutableListOf<String>()
+    val written = mutableListOf<InkLine>()
     val shown = mutableListOf<Suggestion>()
 
     override fun notes(): NotesAccess? = notesStatus?.let { status ->
@@ -22,6 +23,7 @@ private class NotesHost(var notesStatus: NotesStatus?) : PhoneHost by FakeHost()
             override fun status() = status
             override suspend fun insert(text: String): String? = null.also { inserted += text }
             override suspend fun read() = Result.success(NoteText("n1", "Mathe", "Aufgabe 3"))
+            override suspend fun addStrokes(strokes: List<InkLine>): String? = null.also { written += strokes }
         }
     }
 
@@ -88,7 +90,11 @@ class NotesToolsTest {
         assertEquals(200f, s.at.x)
         assertTrue(s.at.y > 480f)
         assertTrue(s.preview.first() is Annotation.Highlight)
-        assertTrue(s.preview.last() is Annotation.Label)
+        // The preview is the very handwriting ✓ writes into the note.
+        assertTrue(s.preview.last() is Annotation.Sketch)
+        val ink = s.ink!!
+        assertTrue(ink.all { it.color == Suggestion.PREVIEW_COLOR })
+        assertTrue(ink.flatMap { it.points }.all { it.x >= 200f && it.y >= s.at.y - 1f })
         assertTrue(host.inserted.isEmpty())
     }
 
@@ -107,5 +113,36 @@ class NotesToolsTest {
         assertEquals("• erst kürzen", lines[1])
         assertTrue(lines.size > 3)
         assertTrue(lines.none { it.contains("`") || it.startsWith("#") })
+    }
+
+    @Test
+    fun `notes_write writes handwriting strokes at the place, in screen pixels`() = runTest {
+        val host = NotesHost(ready.copy(ink = true))
+        val tools = box(host)
+        tools.call("screenshot", args("{}"))
+        val r = tools.call("notes_write", args("""{"text":"x = 391","at":[100,300],"size":20}"""))
+        assertFalse(r.text(), r.isError)
+        assertTrue(host.written.isNotEmpty())
+        val pts = host.written.flatMap { it.points }
+        assertTrue(pts.minOf { it.x } >= 199f && pts.minOf { it.y } >= 599f)
+        assertTrue(host.inserted.isEmpty())
+    }
+
+    @Test
+    fun `notes_write needs a bridge that can write strokes`() = runTest {
+        val host = NotesHost(ready)
+        val tools = box(host)
+        tools.call("screenshot", args("{}"))
+        val r = tools.call("notes_write", args("""{"text":"x","at":[1,1]}"""))
+        assertTrue(r.isError)
+        assertTrue(host.written.isEmpty())
+    }
+
+    @Test
+    fun `marks become ink lines and their labels handwriting`() {
+        val marks = listOf(Annotation.Arrow(Pt(10f, 10f), Pt(200f, 50f), null, null, "hier"))
+        val lines = NotesInk.marks(marks.map(Ink(2f)::render), font("scripts"))
+        assertTrue(lines.size > 3)
+        assertTrue(lines.all { it.points.size >= 2 && it.width > 0f })
     }
 }

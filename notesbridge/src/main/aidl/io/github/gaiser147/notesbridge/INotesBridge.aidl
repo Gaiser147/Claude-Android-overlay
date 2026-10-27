@@ -19,4 +19,20 @@ interface INotesBridge {
      * means the open note. Returns {"noteId":"…","title":"…","text":"…"} or {"error":"…"}.
      */
     String readText(String noteId);
+
+    // Protocol 2 ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * The strokes the user drew since the last call (the first call after a note opens only
+     * remembers what is there), in screen pixels:
+     * {"strokes":[{"id":7,"points":[[x,y],…],"t":[ms,…]}]} or {"error":"…"}.
+     */
+    String newStrokes();
+
+    /**
+     * Writes strokes into the open note as real pen strokes, one undo step:
+     * {"strokes":[{"points":[[x,y],…],"color":-16777216,"width":4.5,"marker":false}]} in screen
+     * pixels (width too). Returns {"ok":true,"count":n} or {"error":"…"}.
+     */
+    String addStrokes(String json);
 }

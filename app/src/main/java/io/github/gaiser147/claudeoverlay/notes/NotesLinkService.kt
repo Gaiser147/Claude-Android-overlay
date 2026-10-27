@@ -33,9 +33,9 @@ class NotesLinkService : Service() {
             val pinned = NotesPin.decode(runBlocking { settings.notesPin() })
             NotesLink.setPin(pinned)
             when (val verdict = NotesPairing.decide(packages, ::certSha256, pinned)) {
-                is NotesPairing.Verdict.Trusted -> NotesLink.attach(bridge, verdict.pin)
+                is NotesPairing.Verdict.Trusted -> NotesLink.attach(bridge, verdict.pin, protocol)
                 is NotesPairing.Verdict.Ask -> {
-                    NotesLink.ask(bridge, verdict.candidate)
+                    NotesLink.ask(bridge, verdict.candidate, protocol)
                     askToPair(verdict.candidate)
                 }
                 is NotesPairing.Verdict.Refused -> throw SecurityException(verdict.reason)

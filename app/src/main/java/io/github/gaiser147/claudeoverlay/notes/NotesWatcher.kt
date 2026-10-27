@@ -8,6 +8,9 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import io.github.gaiser147.claudeoverlay.CrashLog
 import io.github.gaiser147.claudeoverlay.access.ControlService
 import io.github.gaiser147.claudeoverlay.tools.Box
+import io.github.gaiser147.claudeoverlay.tools.PenStroke
+import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,11 +39,15 @@ class NotesWatcher(
 ) {
     private var job: Job? = null
     private val recognizer by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
+    private val handwriting = InkReader()
+    /** The user's strokes since the pen last rested, and when the last one came. */
+    private val batch = ArrayDeque<PenStroke>()
+    private var lastStrokeAt = 0L
     /** Questions already sent, so a scroll or redraw doesn't send one again. */
     private val asked = LinkedHashSet<String>()
 
     fun start() {
-        if (job != null || Build.VERSION.SDK_INT < 30) return
+        if (job != null) return
         job = scope.launch(Dispatchers.Default) {
             try {
                 watch()
@@ -53,25 +60,44 @@ class NotesWatcher(
     fun stop() {
         job?.cancel()
         job = null
-        if (Build.VERSION.SDK_INT >= 30) runCatching { recognizer.close() }
+        runCatching { recognizer.close() }
+        handwriting.close()
     }
 
-    @androidx.annotation.RequiresApi(30)
     private suspend fun watch() {
         var before: PageGrid? = null
         var dirty: Box? = null
         var waiting: LiveTrigger.Question? = null
+        suspend fun found(question: LiveTrigger.Question) {
+            if (!asked.add(LiveTrigger.key(NotesLink.state.value.noteId, question))) return
+            if (asked.size > MAX_REMEMBERED) asked.remove(asked.first())
+            Log.i(TAG, "question on the page: ${question.text}")
+            if (isBusy()) waiting = question else withContext(Dispatchers.Main) { ask(question) }
+        }
         while (true) {
-            delay(POLL_MS)
-            val service = ControlService.instance.value
-            if (!enabled() || service == null || !onNotesPage(service)) {
-                before = null; dirty = null; waiting = null
+            val link = NotesLink.status()
+            // With a stroke-reading bridge: the user's pen strokes, read as handwriting.
+            val byStrokes = link.ink && link.editorOpen
+            delay(if (byStrokes) INK_POLL_MS else POLL_MS)
+            if (!enabled()) {
+                before = null; dirty = null; waiting = null; batch.clear()
                 continue
             }
             waiting?.let { q ->
                 if (!isBusy()) { waiting = null; withContext(Dispatchers.Main) { ask(q) } }
             }
-            val shot = service.screenshot() ?: continue
+            if (byStrokes) {
+                before = null; dirty = null
+                fromStrokes()?.let { found(it) }
+                continue
+            }
+            // Otherwise: what changed on screen, read with text recognition (Android 11+).
+            val service = ControlService.instance.value
+            if (Build.VERSION.SDK_INT < 30 || service == null || !onNotesPage(service)) {
+                before = null; dirty = null; waiting = null
+                continue
+            }
+            val shot = (if (Build.VERSION.SDK_INT >= 30) service.screenshot() else null) ?: continue
             try {
                 val (sw, sh) = shot.width to shot.height
                 val small = Bitmap.createScaledBitmap(shot, sw / DOWNSCALE, sh / DOWNSCALE, true)
@@ -89,14 +115,41 @@ class NotesWatcher(
                 }
                 val region = dirty ?: continue
                 dirty = null
-                val question = LiveTrigger.find(recognize(shot, region)) ?: continue
-                if (!asked.add(LiveTrigger.key(NotesLink.state.value.noteId, question))) continue
-                if (asked.size > MAX_REMEMBERED) asked.remove(asked.first())
-                if (isBusy()) waiting = question else withContext(Dispatchers.Main) { ask(question) }
+                LiveTrigger.find(recognize(shot, region))?.let { found(it) }
             } finally {
                 shot.recycle()
             }
         }
+    }
+
+    /**
+     * New strokes from the bridge; once the pen has rested a moment, the batch is read as
+     * handwriting and checked for the trigger.
+     */
+    private suspend fun fromStrokes(): LiveTrigger.Question? {
+        if (!handwriting.ready()) return null
+        val fresh = NotesLink.newStrokes().getOrElse {
+            Log.w(TAG, "strokes: ${it.message}")
+            return null
+        }
+        val now = SystemClock.uptimeMillis()
+        if (fresh.isNotEmpty()) {
+            batch.addAll(fresh)
+            while (batch.size > MAX_BATCH) batch.removeFirst()
+            lastStrokeAt = now
+            return null
+        }
+        if (batch.isEmpty() || now - lastStrokeAt < PEN_REST_MS) return null
+        val strokes = batch.toList()
+        batch.clear()
+        val readings = handwriting.read(strokes)
+        Log.d(TAG, "read ${strokes.size} strokes as $readings")
+        val pts = strokes.flatMap { it.points }
+        val box = Box(
+            pts.minOf { it.x }.toInt(), pts.minOf { it.y }.toInt(),
+            pts.maxOf { it.x }.toInt(), pts.maxOf { it.y }.toInt(),
+        )
+        return readings.firstNotNullOfOrNull { LiveTrigger.findIn(it, box) }
     }
 
     /** The clone's editor is in front (the bridge says so, or the focused window is the clone's). */
@@ -134,8 +187,13 @@ class NotesWatcher(
     private fun union(a: Box, b: Box) = Box(minOf(a.left, b.left), minOf(a.top, b.top), maxOf(a.right, b.right), maxOf(a.bottom, b.bottom))
 
     companion object {
+        private const val TAG = "NotesWatcher"
         /** How often the page is looked at; one unchanged look means the pen rests. */
         const val POLL_MS = 1200L
+        /** How often the bridge is asked for new strokes, and how long the pen must rest. */
+        const val INK_POLL_MS = 500L
+        const val PEN_REST_MS = 1300L
+        const val MAX_BATCH = 400
         /** The change check runs on a screenshot this many times smaller (cheap). */
         const val DOWNSCALE = 2
         const val MARGIN_PX = 48

@@ -96,5 +96,14 @@ Claude Notes (Klon-Prozess)                          Claude Overlay
 - **Sicherheit:** Die Brücke antwortet nur dem Paket `io.github.gaiser147.claudeoverlay`;
   das Overlay nimmt nur den einmal bestätigten Klon an (Paket + SHA-256 des Zertifikats).
 
-Noch offen (optional, fragil): Striche und Marker über `SpenWNote` direkt einfügen, statt sie
-nur als Vorschau über dem Blatt zu zeigen.
+- **Striche (Protokoll 2):** Über `BaseComposerFragment` → `ComposerView.getComposerView()`
+  (`SpenComposer`, dessen `getNoteZoomScroller()` Ansichts- und Inhaltskoordinaten umrechnet)
+  und `getPresenter().getMSpenWNote()`. `newStrokes` meldet neue `SpenObjectStroke`s der
+  sichtbaren Seiten in Bildschirmpixeln (für die `@c`-Erkennung); `addStrokes` legt Claudes
+  Handschrift als echte Striche an (Seitenkoordinaten = Inhalt − `page.getOffset()`), in einer
+  `beginHistoryGroup`/`endHistoryGroup`, also ein Rückgängig-Schritt, mit dem Stift, den du
+  zuletzt benutzt hast. Claudes Striche tragen eine Markierung in den Zusatzdaten und zählen nie
+  als deine.
+
+Ein erneuter Lauf von `patch.sh --bridge` (oder `bridge.py add-dex`) ersetzt eine ältere Brücke
+im APK, statt eine zweite dazuzulegen.
