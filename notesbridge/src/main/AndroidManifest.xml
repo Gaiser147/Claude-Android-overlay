@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The bridge's manifest entries (a <queries> for the overlay app) are added to the clone by
+     scripts/notes-clone/patch.sh; nothing is merged from here. -->
+<manifest />

@@ -49,6 +49,10 @@ import io.github.gaiser147.claudeoverlay.tools.InputKind
 import io.github.gaiser147.claudeoverlay.tools.PenState
 import io.github.gaiser147.claudeoverlay.tools.ScreenSnapshot
 import io.github.gaiser147.claudeoverlay.tools.McpHttpServer
+import io.github.gaiser147.claudeoverlay.tools.NotesAccess
+import io.github.gaiser147.claudeoverlay.tools.Suggestion
+import io.github.gaiser147.claudeoverlay.notes.NotesLink
+import io.github.gaiser147.claudeoverlay.notes.NotesPin
 import io.github.gaiser147.claudeoverlay.tools.PhoneHost
 import io.github.gaiser147.claudeoverlay.tools.PhoneToolbox
 import io.github.gaiser147.claudeoverlay.tools.Stroke
@@ -80,6 +84,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
     lateinit var controller: ChatController
         private set
     private lateinit var annotations: AnnotationLayer
+    private lateinit var suggestions: SuggestionLayer
     private lateinit var mcp: McpHttpServer
 
     /**
@@ -109,6 +114,13 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         current = this
         wm = getSystemService(WindowManager::class.java)
         annotations = AnnotationLayer(this, this)
+        suggestions = SuggestionLayer(
+            this, this,
+            accept = { NotesLink.insert(it.text) },
+            launch = { work -> safeScope.launch { work() } },
+            decided = { s, accepted -> controller.suggestionDecided(s.id, accepted) },
+        )
+        safeScope.launch { NotesLink.setPin(NotesPin.decode(AppGraph.get(this@OverlayService).settings.notesPin())) }
         val toolbox = PhoneToolbox(phoneHost, HersheyFont(asset("hershey/romans.txt")), HersheyFont(asset("hershey/scripts.txt")))
         mcp = McpHttpServer(toolbox)
         controller = ChatController(
@@ -179,6 +191,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         controller.close()
         mcp.close()
         annotations.clear()
+        suggestions.clear()
         runCatching { wm.removeView(root) }
         if (current === this) current = null
         super.onDestroy()
@@ -304,6 +317,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             params.alpha = if (hidden) 0f else 1f
             update()
             if (!keepDrawings) annotations.setHidden(hidden)
+            suggestions.setHidden(hidden, keepPreviews = keepDrawings)
         }
     }
 
@@ -324,6 +338,7 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
         else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         update()
         annotations.setHidden(aside)
+        suggestions.setHidden(aside)
         if (aside) delay(INPUT_SETTLE_MS)
     }
 
@@ -408,6 +423,12 @@ class OverlayService : LifecycleService(), SavedStateRegistryOwner, OverlayWindo
             collapse()
             startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             match.first
+        }
+
+        override fun notes(): NotesAccess? = NotesLink.takeIf { it.known }
+
+        override suspend fun showSuggestion(suggestion: Suggestion) = withContext(Dispatchers.Main) {
+            suggestions.show(suggestion)
         }
     }
 

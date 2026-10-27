@@ -56,6 +56,11 @@ android {
         aidl = true
     }
 
+    sourceSets {
+        // The interfaces shared with the bridge inside the Claude Notes clone (:notesbridge).
+        getByName("main").aidl.srcDir("../notesbridge/src/main/aidl")
+    }
+
     packaging {
         jniLibs {
             // The helpers in jniLibs are exec'd as programs, so they must land on disk in
@@ -92,6 +97,8 @@ dependencies {
     implementation(libs.markdown.renderer.m3)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    // On-device text recognition (bundled model, no download) for the live "@c" trigger.
+    implementation(libs.mlkit.text.recognition)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
