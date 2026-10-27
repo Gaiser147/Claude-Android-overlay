@@ -145,4 +145,30 @@ class NotesToolsTest {
         assertTrue(lines.size > 3)
         assertTrue(lines.all { it.points.size >= 2 && it.width > 0f })
     }
+
+    @Test
+    fun `without a size, handwriting is about as tall as the question`() = runTest {
+        val host = NotesHost(ready)
+        val tools = box(host)
+        tools.call("screenshot", args("{}")) // 500×1000 shot of a 1000×2000 screen: ×2
+        tools.call("notes_suggest", args("""{"text":"x","around":[100,200,300,250]}"""))
+        // 50 px tall question → letters 40 shot px = 80 screen px.
+        assertEquals(80f, host.shown.single().size, 0.01f)
+        tools.call("notes_suggest", args("""{"text":"x","at":[1,1],"size":5}"""))
+        assertEquals(48f, host.shown.last().size, 0.01f)
+    }
+
+    @Test
+    fun `the preview draws the exact strokes that get written, without wobble`() = runTest {
+        val host = NotesHost(ready)
+        val tools = box(host)
+        tools.call("screenshot", args("{}"))
+        tools.call("notes_suggest", args("""{"text":"z = 3","at":[10,10]}"""))
+        val s = host.shown.single()
+        val sketch = s.preview.last() as Annotation.Sketch
+        assertEquals(s.ink!!.map { it.points }, sketch.contours)
+        val rendered = Ink(2f).render(sketch)
+        assertTrue(rendered.strokes.all { !it.halo })
+        assertEquals(s.ink!!.filter { it.points.size >= 2 }.map { it.points }, rendered.strokes.map { it.points })
+    }
 }

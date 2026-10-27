@@ -43,6 +43,9 @@ class NotesWatcher(
     /** The user's strokes since the pen last rested, and when the last one came. */
     private val batch = ArrayDeque<PenStroke>()
     private var lastStrokeAt = 0L
+    /** newStrokes failed this many times in a row (an editor Notes changed, …). */
+    private var strokeFailures = 0
+    private var ticks = 0
     /** Questions already sent, so a scroll or redraw doesn't send one again. */
     private val asked = LinkedHashSet<String>()
 
@@ -76,8 +79,10 @@ class NotesWatcher(
         }
         while (true) {
             val link = NotesLink.status()
-            // With a stroke-reading bridge: the user's pen strokes, read as handwriting.
-            val byStrokes = link.ink && link.editorOpen
+            // With a stroke-reading bridge: the user's pen strokes, read as handwriting; the
+            // screen is the fallback when the bridge keeps failing to read them.
+            val retry = ++ticks % STROKE_RETRY_TICKS == 0
+            val byStrokes = link.ink && link.editorOpen && (strokeFailures < MAX_STROKE_FAILURES || retry)
             delay(if (byStrokes) INK_POLL_MS else POLL_MS)
             if (!enabled()) {
                 before = null; dirty = null; waiting = null; batch.clear()
@@ -130,8 +135,10 @@ class NotesWatcher(
         if (!handwriting.ready()) return null
         val fresh = NotesLink.newStrokes().getOrElse {
             Log.w(TAG, "strokes: ${it.message}")
+            if (++strokeFailures >= MAX_STROKE_FAILURES) Log.w(TAG, "reading the screen instead")
             return null
         }
+        strokeFailures = 0
         val now = SystemClock.uptimeMillis()
         if (fresh.isNotEmpty()) {
             batch.addAll(fresh)
@@ -194,6 +201,9 @@ class NotesWatcher(
         const val INK_POLL_MS = 500L
         const val PEN_REST_MS = 1300L
         const val MAX_BATCH = 400
+        const val MAX_STROKE_FAILURES = 5
+        /** While on the screen fallback, try the strokes again every this many looks. */
+        const val STROKE_RETRY_TICKS = 25
         /** The change check runs on a screenshot this many times smaller (cheap). */
         const val DOWNSCALE = 2
         const val MARGIN_PX = 48

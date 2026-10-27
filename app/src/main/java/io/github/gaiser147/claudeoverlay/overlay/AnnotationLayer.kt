@@ -244,7 +244,7 @@ private fun DrawScope.drawInk(s: InkStroke, fraction: Float) {
     val n = if (fraction >= 1f) s.points.size else prefixCount(s, fraction)
     if (n < 2) return
     val color = Color(s.color)
-    if (!s.marker) {
+    if (!s.marker && s.halo) {
         // A soft paper-coloured edge keeps ink legible over busy text or dark screens.
         drawPath(outline(s, n, extra = 1.6f * density), Color.White.copy(alpha = 0.32f))
     }
