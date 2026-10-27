@@ -5,11 +5,16 @@ sha256 `daed1eff…b8667`), mit apktool 2.10.0 (Manifest/Ressourcen) und jadx 1.
 (11 dex-Dateien, ~24 000 Klassen) zerlegt. Ziel: Claude soll **nativ in Notizen schreiben**
 und **live neben dir** mitlesen und Tipps geben.
 
+> **Update:** Der Klon-Patcher-Weg wurde untersucht und als machbar bestätigt — siehe
+> [Abschnitt „Klon-Patcher“](#klon-patcher-eigenstandiges-claude-notes) und
+> `scripts/notes-clone/`.
+
 ## Kurzfassung
 
 1. **Ein echtes Plugin-System gibt es nicht.** Samsung Notes lädt keinen Fremdcode; ein
    umgebautes APK verliert Samsungs Signatur (Konto, Sync, signaturgeschützte Provider).
-   Xposed/LSPosed ginge nur mit Root.
+   Xposed/LSPosed ginge nur mit Root. **Aber:** Ein neu signierter, umbenannter **Klon**
+   lässt sich neben dem echten Notes installieren und von innen erweitern (unten).
 2. **Aber: Samsung Notes bietet Android-AppFunctions an** – eine offizielle Schnittstelle für
    KI-Agenten (`assets/app_function.xml`, Dienst
    `com.google.android.appfunctions.service.MainAppFunctionService`):
@@ -150,6 +155,33 @@ Konkret im Repo:
   Stiftstrich dabei stört.
 - Ob die Bibliothek bei Android-16-Geräten über `android.app.appfunctions` oder den älteren
   Sidecar `android.app.appsearch.functions` gebunden wird. Das Manifest deklariert beide.
+
+## Klon-Patcher: eigenständiges „Claude Notes“
+
+Statt die echte App zu patchen (bricht Signatur, kollidiert mit dem Original) baut der
+Patcher in `scripts/notes-clone/` einen **umbenannten Klon**, der sich daneben installiert
+und von innen erweitert wird. Machbarkeit am APK 4.4.45.37 geprüft:
+
+| Frage | Ergebnis |
+|---|---|
+| apktool-Rundlauf (volle smali-Dekodierung → Rebuild)? | **Ja**, läuft sauber durch (`rebuilt.apk` ~214 MB). |
+| `sharedUserId`? | **Keiner** → neu signierbar und unabhängig installierbar. |
+| Paket + Authorities eindeutig umbenennbar? | **Ja**: 22 Authorities, grenzsicher per Skript; interner `senl`-Namensraum und `notesx`-Permission bleiben unberührt. Im gebauten APK ist die neue ID aktiv, 0 alte Authorities übrig. |
+| Kern-Editor signaturgesperrt? | **Nein**: `isSepModel` u. Ä. hängen am Geräte-Feature, nicht an der Signatur. |
+| Einhängepunkt für Claude? | `MemoApplication.onCreate()` — Hook direkt nach `super.onCreate()` eingespritzt und mitgebaut. |
+| Native Stift-Libs per festem Pfad? | Fast alle per Name (`System.loadLibrary`), unkritisch; nur zwei Kamera/OCR-Libs aus `/system/lib64` (nicht Kern). |
+
+**Was im Container getestet ist:** Dekodieren → Umbenennen → Hook einspritzen → Rebuild.
+**Was nur auf dem Gerät geht (ungetestet):** Signieren, Installieren, ob der neu signierte
+Klon ohne Laufzeitfehler startet und Notizen bearbeitet. Mögliche Stolpersteine dort:
+Knox-/Samsung-Account-/scloud-Initialisierung, die beim Start meckert (sollte den Editor
+aber nicht blockieren, da nicht signaturgeprüft).
+
+**Preis des Klons:** eigene, leere Notiz-DB; keine vorhandenen Notizen, kein Sync (so
+gewünscht). **Gewinn:** Claude läuft *im selben Prozess* — er darf die eigenen AppFunctions
+ohne Berechtigung aufrufen (`updateNote` schreibt live in die offene Notiz) und kann über
+die Spen-SDK-API punktgenau markieren/zeichnen. Details und die geplante In-Prozess-Brücke:
+`scripts/notes-clone/README.md`.
 
 ## Werkzeuge reproduzieren
 
