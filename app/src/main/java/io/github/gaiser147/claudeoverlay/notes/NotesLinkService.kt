@@ -16,6 +16,7 @@ import io.github.gaiser147.notesbridge.INotesBridge
 import io.github.gaiser147.notesbridge.INotesLink
 import kotlinx.coroutines.runBlocking
 import java.security.MessageDigest
+import kotlin.concurrent.thread
 
 /**
  * Where the bridge inside the Claude Notes clone connects (it binds here while a note editor
@@ -52,7 +53,10 @@ class NotesLinkService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_PAIR -> NotesLink.confirm()?.let { pin -> runBlocking { settings.setNotesPin(pin.encode()) } }
+            ACTION_PAIR -> NotesLink.confirm()?.let { pin ->
+                runBlocking { settings.setNotesPin(pin.encode()) }
+                thread(name = "notes-refresh") { NotesLink.refresh() }
+            }
             ACTION_DECLINE -> NotesLink.decline()
         }
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)

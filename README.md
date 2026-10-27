@@ -122,6 +122,32 @@ Ohne Shizuku: in Samsung Notes das Zeichnen mit dem Finger erlauben (je nach Ver
 „S Pen“ die Option „Nur S Pen“ ausschalten) oder Claude über das Text-Werkzeug (Tastatur-Symbol)
 mit `type_text` schreiben lassen; das Tool weist Claude selbst darauf hin.
 
+## Claude Notes: Claude live auf deinem Notizblatt
+
+Mit dem Klon-Patcher (`scripts/notes-clone/`, siehe dessen README) baust du aus Samsung Notes
+einen eigenen Klon **„Claude Notes“**, der neben dem echten Samsung Notes läuft und eine kleine
+Brücke zu Claude Overlay enthält. Dann arbeitet Claude neben dir auf dem Blatt:
+
+- **Frage aufs Blatt schreiben:** Beginne eine handschriftliche Zeile mit **`@c`**, z. B.
+  `@c Was ist die Ableitung von sin(x²)?`. Sobald du kurz absetzt, erkennt das Overlay die Frage
+  **auf dem Gerät** (ML Kit, ohne Claude-Kontingent) und schickt nur dann eine Nachricht mit
+  Screenshot an Claude. Alles ohne `@c` bleibt auf dem Gerät. Ein- und ausschalten im ⋮-Menü
+  des Overlays: „Live-Assistent in Claude Notes (@c)“. Braucht die Bedienungshilfe (Schritt 6).
+- **Antwort als Vorschau:** Claude antwortet direkt an der Frage in blauer Handschrift, auf Wunsch
+  mit Markierungen, und darunter erscheinen **✓ Übernehmen** und **✗**. Erst ✓ schreibt den Text
+  (als Markdown, also mit Überschriften und Listen) **live in die offene Notiz**, unter ihren
+  bisherigen Inhalt. Claude erfährt deine Wahl mit deiner nächsten Nachricht.
+- **Auch im Chat:** „Schreib eine Einkaufsliste in die Notiz“ funktioniert ebenso; Claude nutzt
+  dafür die Tools `notes_suggest`, `notes_insert`, `notes_read` und `notes_status`.
+
+**Koppeln:** Öffnest du im Klon zum ersten Mal eine Notiz, fragt Claude Overlay per
+Benachrichtigung „Claude Notes koppeln?“. Danach vertraut es genau diesem Klon (Paketname und
+Signaturzertifikat). Ein mit anderem Schlüssel signierter Klon muss neu gekoppelt werden.
+
+Grenzen: Eingefügt wird unter den vorhandenen Inhalt, nicht an der Cursorposition. Markierungen
+bleiben Vorschau und werden nicht Teil der Notiz. `notes_read` liefert nur gespeicherten,
+getippten Text; Handschrift liest Claude aus dem Screenshot.
+
 ## Wenn das Overlay verschwindet oder du dich neu anmelden musst
 
 - **Absturzbericht:** Wurde das Overlay unerwartet beendet, zeigt die App beim nächsten Öffnen

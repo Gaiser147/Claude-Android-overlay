@@ -72,6 +72,14 @@ object NotesLink : NotesAccess {
     internal fun editorChanged(open: Boolean, noteId: String?) =
         _state.update { it.copy(editorOpen = open, noteId = if (open) noteId ?: it.noteId else it.noteId) }
 
+    /** Asks the bridge whether a note is open (after pairing, it last reported before that). */
+    internal fun refresh() {
+        val bridge = _state.value.bridge ?: return
+        val status = call { bridge.status() } ?: return
+        val open = (status["editor"] as? JsonPrimitive)?.content == "true"
+        editorChanged(open, status.str("noteId"))
+    }
+
     private fun detach(bridge: INotesBridge) = _state.update {
         if (it.bridge?.asBinder() == bridge.asBinder()) it.copy(bridge = null, editorOpen = false) else it
     }

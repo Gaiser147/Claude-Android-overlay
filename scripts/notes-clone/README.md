@@ -31,15 +31,19 @@ markieren – direkt auf dem Blatt, ohne Shizuku und ohne die Grenzen der AppFun
    angetastet: Komponenten-Klassennamen (`android:name`/`targetActivity`), Intent-Actions
    und externe Permissions. (Ein grobes Ersetzen würde den Klassennamen in
    `android:name="…notes.MemoApplication"` mitändern → ClassNotFoundException beim Start.)
-4. App-Name auf „Claude Notes“.
-5. Ablegen der Klasse `io.github.gaiser147.notesbridge.Bootstrap` und Aufruf von
-   `Bootstrap.start(context)` direkt nach `super.onCreate()` in `MemoApplication`.
-6. `apktool b` – neu bauen.
+3. App-Name auf „Claude Notes“.
+4. Aufruf von `io.github.gaiser147.notesbridge.Bootstrap.start(context)` direkt nach
+   `super.onCreate()` in `MemoApplication`.
+   - Mit `--bridge notesbridge.dex`: Die echte Brücke kommt nach dem Bauen als nächstes
+     `classesN.dex` ins APK (`bridge.py add-dex`), und der Klon darf das Overlay sehen
+     (`<queries>`, `bridge.py queries`).
+   - Ohne `--bridge`: ein Log-Stub (`smali/…/Bootstrap.smali`), nur zum Prüfen des Hooks.
+5. `apktool b` – neu bauen.
 
-Getestet: Dekompilieren → Umbenennen → Hook einspritzen → **Rebuild** läuft sauber durch,
-der Paketname im gebauten APK ist die neue ID, alle Authorities sind umbenannt.
-**Nicht** getestet (geht nur auf dem Gerät): Signieren, Installieren, ob der neu signierte
-Klon ohne Fehler startet und Notizen bearbeitet.
+Getestet (Container, Notes 4.4.45.37): Dekompilieren → Umbenennen → Hook → Rebuild →
+Brücke als `classes12.dex` → `zipalign` → `apksigner sign`/`verify` laufen durch.
+**Nicht** getestet (geht nur auf dem Gerät): Installieren, ob der neu signierte Klon ohne
+Fehler startet, und das Live-Einfügen.
 
 ## Benutzung
 
@@ -47,7 +51,11 @@ Klon ohne Fehler startet und Notizen bearbeitet.
 # apktool bereitstellen (z. B. die Jar aus den Releases von iBotPeaches/Apktool)
 export APKTOOL="java -jar /pfad/apktool_2.10.0.jar"
 
+# Die Brücke: aus den Releases dieses Repos (notesbridge-<version>.dex) oder selbst bauen
+./gradlew :notesbridge:bridgeDex     # → notesbridge/build/outputs/dex/notesbridge.dex
+
 scripts/notes-clone/patch.sh com.samsung.android.app.notes_4.4.45.37.apk \
+  --bridge notesbridge/build/outputs/dex/notesbridge.dex \
   --out notesclaude-unsigned.apk
 # optional: NEW_ID=... LABEL=... vorher setzen
 
@@ -58,27 +66,35 @@ apksigner sign --ks release.jks --out notesclaude.apk notesclaude-aligned.apk
 adb install -r notesclaude.apk
 ```
 
-## In-Prozess-Brücke (nächster Schritt – aktuell nur ein Log-Stub)
+Danach Claude Notes öffnen, eine Notiz anlegen und die Benachrichtigung „Claude Notes
+koppeln?“ von Claude Overlay bestätigen. Bewahre `release.jks` auf: Ein Update des Klons
+muss mit demselben Schlüssel signiert sein, sonst verweigert Android die Installation und
+Claude Overlay die Kopplung.
 
-`Bootstrap.start()` loggt derzeit nur, um zu beweisen, dass der Hook kompiliert und feuert.
-Die eigentliche Brücke ersetzt diesen Stub und gibt Claude „neben dir auf dem Blatt“:
+## Die In-Prozess-Brücke (`notesbridge/` im Repo)
 
-- **Verbindung:** Die Brücke öffnet einen lokalen Socket (Zufalls-Secret) und spricht mit
-  dem Claude-Overlay (dessen MCP-Server). Neue Overlay-Tools `notes_*` schicken Befehle
-  hierher.
-- **Text schreiben (stabil):** Im selben Prozess darf die App ihre **eigenen** AppFunctions
-  ohne Berechtigung aufrufen. Die Brücke ruft `NoteFunctions.createNote/updateNote` direkt
-  auf – `updateNote` auf die offene Notiz fügt Markdown **live im Editor** ein. Kein
-  Shizuku, keine `EXECUTE_APP_FUNCTIONS`-Hürde.
-- **Markieren/zeichnen punktgenau:** Über `ActivityLifecycleCallbacks` die oberste
-  `ComposerActivity` greifen und deren `SpenWNote` nutzen (dieselbe Spen-SDK-API, die die
-  App selbst verwendet), um Striche/Objekte an exakten Koordinaten einzufügen. Die
-  Stift-Engine ist im Prozess schon geladen. Alternativ die vorhandene Annotations-Ebene
-  des Overlays über dem Klon.
-- **Mitlesen:** Wie bisher per Screenshot/Bedienungshilfe; im Klon zusätzlich direkt der
-  aktuelle Notiztext aus dem `SpenWNote`.
+Reines Java, ohne Kotlin oder andere Bibliotheken, die mit denen von Samsung Notes kollidieren
+könnten. Alle Samsung-Namen stehen in `Symbols.java`; ändert eine neue Notes-Version sie, ist
+das die einzige Stelle.
 
-Der Reflection-Zugriff auf den Editor ist versionsabhängig und damit der fragilste Teil;
-der AppFunction-Weg (Googles stabiles Schema) ist der robuste Kern. Darum zuerst Text über
-AppFunctions, Markierungen über die Annotations-Ebene, und erst danach optional die tiefen
-Spen-Hooks.
+```
+Claude Notes (Klon-Prozess)                          Claude Overlay
+ MemoApplication.onCreate → Bootstrap.start           NotesLinkService (exportiert)
+   Editor im Vordergrund → bindService ─────────────▶   prüft Paket + Zertifikat (Kopplung)
+   INotesBridge ◀───────────── insertText/readText ──   notes_* Tools ◀─MCP─ Claude
+```
+
+- **Text einfügen:** Die Brücke schickt der offenen `ComposerActivity` (singleTop) dasselbe
+  Intent, das Notes sich selbst für Bixby/Gemini schickt: `ACTION_SEND` mit
+  `BixbyAction=AddContentToEditingNote`, `AI_ACTION_UPDATE_EDITING_NOTE=true`, `noteId` und
+  `EXTRA_TEXT`, in die Task des Editors (`ActivityManager.AppTask.startActivity`, wie
+  `UpdateAsync`). `ActionSendHelperAppFunction` fügt den Text unter dem Inhalt ein.
+- **Lesen:** `NotesDataRepositoryFactory.newInstance(ctx).createSearchRepository()
+  .getDocumentTextData([uuid])` → Titel und getippter Text (Stand: zuletzt gespeichert).
+- **Offene Notiz:** `ComposerManager.getInstance().getLatestComposerUuid()` /
+  `getComposerToAddContent(0)`.
+- **Sicherheit:** Die Brücke antwortet nur dem Paket `io.github.gaiser147.claudeoverlay`;
+  das Overlay nimmt nur den einmal bestätigten Klon an (Paket + SHA-256 des Zertifikats).
+
+Noch offen (optional, fragil): Striche und Marker über `SpenWNote` direkt einfügen, statt sie
+nur als Vorschau über dem Blatt zu zeigen.

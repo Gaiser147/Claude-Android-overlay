@@ -226,6 +226,10 @@ private fun Header(
                     text = { Text(stringResource(R.string.allow_control) + if (state.controlAllowed) "  ✓" else "") },
                     onClick = { moreMenu = false; controller.setControlAllowed(!state.controlAllowed) },
                 )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.notes_live) + if (state.notesLive) "  ✓" else "") },
+                    onClick = { moreMenu = false; controller.setNotesLive(!state.notesLive) },
+                )
                 DropdownMenuItem(text = { Text(stringResource(R.string.attach_files)) }, onClick = {
                     moreMenu = false; actions.pickFiles()
                 })

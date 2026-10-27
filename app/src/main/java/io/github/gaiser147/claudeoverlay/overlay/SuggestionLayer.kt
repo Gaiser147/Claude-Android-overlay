@@ -35,6 +35,9 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import io.github.gaiser147.claudeoverlay.R
+import io.github.gaiser147.claudeoverlay.tools.Annotation
+import io.github.gaiser147.claudeoverlay.tools.Box
+import io.github.gaiser147.claudeoverlay.tools.Pt
 import io.github.gaiser147.claudeoverlay.tools.Suggestion
 import kotlin.math.roundToInt
 
@@ -82,6 +85,36 @@ class SuggestionLayer(
     }
 
     fun clear() = shown.toList().forEach(::remove)
+
+    /** Where the previews and their buttons are (screen pixels), roughly. */
+    fun areas(): List<Box> = shown.map { s ->
+        val g = s.suggestion
+        val width = (g.lines.maxOfOrNull { it.length } ?: 0) * g.size * Suggestion.CHAR_WIDTH
+        val barHeight = 56 * context.resources.displayMetrics.density
+        Box(g.at.x.toInt(), g.at.y.toInt(), (g.at.x + maxOf(width, BAR_WIDTH_DP * context.resources.displayMetrics.density)).toInt(), (g.bottom + barHeight).toInt())
+    } + shown.flatMap { s -> s.suggestion.marks.map { markBounds(it) } }
+
+    private fun markBounds(a: Annotation): Box {
+        val pts = when (a) {
+            is Annotation.Arrow -> listOf(a.from, a.to)
+            is Annotation.Box -> listOf(a.topLeft, a.bottomRight)
+            is Annotation.Highlight -> listOf(a.topLeft, a.bottomRight)
+            is Annotation.Ellipse -> listOf(Pt(a.center.x - a.rx, a.center.y - a.ry), Pt(a.center.x + a.rx, a.center.y + a.ry))
+            is Annotation.Underline -> listOf(a.from, a.to)
+            is Annotation.Strike -> listOf(a.from, a.to)
+            is Annotation.Check -> listOf(Pt(a.center.x - a.size, a.center.y - a.size), Pt(a.center.x + a.size, a.center.y + a.size))
+            is Annotation.Cross -> listOf(Pt(a.center.x - a.size, a.center.y - a.size), Pt(a.center.x + a.size, a.center.y + a.size))
+            is Annotation.Dot -> listOf(a.at)
+            is Annotation.Label -> listOf(a.at, Pt(a.at.x + a.text.length * (a.size ?: 30f) * 0.5f, a.at.y + (a.size ?: 30f) * 1.4f))
+            is Annotation.Path -> a.points
+            is Annotation.Sketch -> a.contours.flatten()
+        }.ifEmpty { return Box(0, 0, 0, 0) }
+        val pad = 24
+        return Box(
+            pts.minOf { it.x }.toInt() - pad, pts.minOf { it.y }.toInt() - pad,
+            pts.maxOf { it.x }.toInt() + pad, pts.maxOf { it.y }.toInt() + pad,
+        )
+    }
 
     private fun remove(s: Shown) {
         shown.remove(s)
@@ -147,5 +180,10 @@ class SuggestionLayer(
             }
         }
         return view to params
+    }
+
+    private companion object {
+        /** About how wide the ✓/✗ bar is. */
+        const val BAR_WIDTH_DP = 180
     }
 }

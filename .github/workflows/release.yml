@@ -50,7 +50,7 @@ jobs:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease :notesbridge:bridgeDex
 
       - name: Check the signature
         run: |
@@ -62,7 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION_NAME" "claude-overlay-$VERSION_NAME.apk" \
+          # The bridge for scripts/notes-clone/patch.sh --bridge (Claude Notes).
+          cp notesbridge/build/outputs/dex/notesbridge.dex "notesbridge-$VERSION_NAME.dex"
+          gh release create "v$VERSION_NAME" "claude-overlay-$VERSION_NAME.apk" "notesbridge-$VERSION_NAME.dex" \
             --target "$GITHUB_SHA" \
             --title "Claude Overlay $VERSION_NAME" \
             --generate-notes \

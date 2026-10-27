@@ -73,6 +73,8 @@ data class ChatUiState(
     val controlAllowed: Boolean = false,
     /** Claude's drawings are on the screen. */
     val drawingsShown: Boolean = false,
+    /** Watch Claude Notes pages for questions marked "@c". */
+    val notesLive: Boolean = true,
 )
 
 /**
@@ -134,6 +136,7 @@ class ChatController(
                     resumableSession = graph.settings.lastSession(),
                     readAloud = graph.settings.readAloud(),
                     controlAllowed = graph.settings.controlAllowed(),
+                    notesLive = graph.settings.notesLive(),
                 )
             }
             when {
@@ -224,6 +227,11 @@ class ChatController(
         if (on && ControlService.instance.value == null) {
             notice("Phone control also needs the accessibility service: Settings ⋮ → step 6.", true)
         }
+    }
+
+    fun setNotesLive(on: Boolean) {
+        _state.update { it.copy(notesLive = on) }
+        scope.launch { graph.settings.setNotesLive(on) }
     }
 
     fun setDrawingsShown(shown: Boolean) = _state.update { it.copy(drawingsShown = shown) }
