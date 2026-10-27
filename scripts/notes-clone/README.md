@@ -25,11 +25,12 @@ markieren – direkt auf dem Blatt, ohne Shizuku und ohne die Grenzen der AppFun
 ## Was das Skript macht
 
 1. `apktool d` – volles Dekompilieren (smali).
-2. Grenzsichere Umbenennung `com.samsung.android.app.notes` → neue ID in Manifest, XML und
-   smali. Geschützt bleiben dabei der interne `…support.senl`-Klassen-Namensraum und die
-   fremde `…app.notesx`-Sync-Permission.
-3. Eindeutige Umbenennung der drei Authorities außerhalb des notes-Namensraums
-   (`SettingsAiProvider`, OCR-Resourcemanager, DiagMon-Log) in Manifest **und** smali.
+2. Klassensichere Umbenennung (`rename.py`): **nur** `package`, die Provider-Authorities
+   (alle, auch die drei außerhalb des notes-Namensraums) und die app-eigenen Permissions
+   werden umbenannt — per exaktem `"string"`-Ersatz in Manifest und smali. **Nicht**
+   angetastet: Komponenten-Klassennamen (`android:name`/`targetActivity`), Intent-Actions
+   und externe Permissions. (Ein grobes Ersetzen würde den Klassennamen in
+   `android:name="…notes.MemoApplication"` mitändern → ClassNotFoundException beim Start.)
 4. App-Name auf „Claude Notes“.
 5. Ablegen der Klasse `io.github.gaiser147.notesbridge.Bootstrap` und Aufruf von
    `Bootstrap.start(context)` direkt nach `super.onCreate()` in `MemoApplication`.

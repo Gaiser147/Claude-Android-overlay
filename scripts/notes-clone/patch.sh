@@ -46,31 +46,13 @@ fi
 [ -d "$WORK" ] || { echo "Dekodiertes Verzeichnis $WORK fehlt"; exit 1; }
 
 MANIFEST="$WORK/AndroidManifest.xml"
-OLD_RE="${OLD_ID//./\\.}"
 
-echo ">> Benenne applicationId $OLD_ID → $NEW_ID (grenzsicher) in Manifest, XML und smali"
-# Nur ersetzen, wenn direkt gefolgt von " . oder / — schützt com.samsung.android.app.notesx
-# (Sync-Permission) und lässt den internen senl-Namensraum unangetastet.
-{ grep -rlZ --include='*.smali' --include='*.xml' "\"$OLD_ID" "$WORK" 2>/dev/null || true; } \
-  | xargs -0 -r sed -i -E "s/${OLD_RE}([\".\/])/${NEW_ID}\1/g"
-
-echo ">> Setze Manifest-package und restliche Authorities eindeutig"
-sed -i -E "s/package=\"${OLD_RE}\"/package=\"${NEW_ID}\"/" "$MANIFEST"
-# Drei Authorities liegen außerhalb des notes-Namensraums und würden sonst mit dem
-# echten Samsung Notes beim Installieren kollidieren. Eindeutig umhängen (Manifest + smali).
-remap_authority() {
-  local old="$1" new="$2" oldre
-  oldre="${old//./\\.}"
-  sed -i -E "s/${oldre}/${new}/g" "$MANIFEST"
-  { grep -rlZ --include='*.smali' "\"$old\"" "$WORK" 2>/dev/null || true; } \
-    | xargs -0 -r sed -i -E "s/\"${oldre}\"/\"${new}\"/g"
-}
-remap_authority "com.samsung.android.support.senl.nt.app.provider.SettingsAiProvider" "${NEW_ID}.SettingsAiProvider"
-remap_authority "com.samsung.android.sdk.ocr.resourcemanager"                          "${NEW_ID}.ocrResourceManager"
-remap_authority "com.sec.android.log.sn0vpasr64"                                        "${NEW_ID}.diagMonLog"
-
-echo ">> Setze App-Namen auf \"$LABEL\""
-sed -i -E "s/android:label=\"@string\/app_name\"/android:label=\"${LABEL}\"/g" "$MANIFEST"
+echo ">> Benenne package + Authorities + app-eigene Permissions um (klassensicher)"
+# WICHTIG: nur applicationId, Provider-Authorities und app-eigene Permissions umbenennen.
+# Komponenten-Klassennamen (android:name/targetActivity), Actions und externe Permissions
+# MÜSSEN original bleiben — sonst ClassNotFoundException beim Start (die Klassen heißen im
+# Code weiter com.samsung.android.app.notes.*). Macht rename.py exakt (quoted-string).
+python3 -I "$HERE/rename.py" "$WORK" "$OLD_ID" "$NEW_ID" "$LABEL"
 
 echo ">> Lege Bootstrap-Klasse ab (classes.dex = smali/)"
 mkdir -p "$WORK/smali/io/github/gaiser147/notesbridge"
